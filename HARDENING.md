@@ -4,10 +4,22 @@ This file is ours, not upstream's — kept separate from `README.md` (upstream's
 
 ## Upstream source
 
-- **Origin**: [`bobby060/anylist-mcp`](https://github.com/bobby060/anylist-mcp), vendored as a git submodule with its own nested submodule (`anylist-js/`) — see root `.gitmodules`. Full upstream git history is present in this directory.
+- **Original project**: [`bobby060/anylist-mcp`](https://github.com/bobby060/anylist-mcp) — has its own nested submodule, `anylist-js/`, unaffected by anything below (we've never needed to modify it, so it's still pinned straight from `bobby060/anylist-js`).
 - **Used with its full tool set** (lists, recipes, meal planning, shopping/retailer send) for the initial build — not scoped down. See `docs/PROJECT_PLAN.md` for why (Pippin/AnyList stays the primary system for this domain; the custom Obsidian-based replacement is Phase 2, deferred).
+- **Vendored via a fork, not the original repo directly**: `.gitmodules` points this submodule at [`sbllrd/anylist-mcp`](https://github.com/sbllrd/anylist-mcp) (a fork), not `bobby060/anylist-mcp` — needed because our own hardening commits (the non-root Dockerfile fix, this file) get pushed there. The original repo isn't ours to push to. Remotes in this directory: `origin` = the fork (push here), `upstream` = the original repo (fetch-only, never push).
 - **Working approach**: hardening work happens as commits directly on top of upstream's own history in this directory (not a separate clean copy) — `git log --oneline` here shows both upstream's commits and ours.
-- **Pulling upstream updates**: our own commits sit on top of a specific pinned commit, so a plain `git submodule update --remote` would overwrite them by resetting to upstream's branch tip. Instead: `cd services/mcp-anylist && git fetch origin && git rebase origin/main` (rebase our commits onto the new upstream tip, resolving conflicts if any — also re-run `git submodule update --init` afterward in case `anylist-js/`'s pinned commit changed), then from the repo root `git add services/mcp-anylist && git commit` to record the new pinned commit. Re-verify the hardening below after any upstream update — a rebase or upstream change can silently affect it (e.g. the Dockerfile regaining a `USER` directive that conflicts with ours, or losing it again).
+- **Pulling upstream updates**:
+  ```
+  cd services/mcp-anylist
+  git fetch upstream
+  git rebase upstream/main          # replay our commits onto the new upstream tip
+  git submodule update --init       # in case anylist-js's pinned commit also changed
+  git push origin main              # keep the fork's main in sync with our rebased history
+  cd ../..
+  git add services/mcp-anylist && git commit   # record the new pinned commit in the parent repo
+  ```
+  A plain `git submodule update --remote` would instead reset to `origin`'s tip with no rebase — since `origin` is our fork, that's actually safe here (it'd just re-fetch what we already pushed), but it won't pull anything new from upstream at all. Always fetch from `upstream` specifically to get real upstream changes. Re-verify the hardening below after any upstream update — a rebase or upstream change can silently affect it (e.g. the Dockerfile regaining a `USER` directive that conflicts with ours, or losing it again).
+- **Fresh clone of the parent repo**: `git submodule update --init` sets up `origin` (the fork) automatically from `.gitmodules`, but not `upstream` — add it yourself: `git remote add upstream https://github.com/bobby060/anylist-mcp.git`.
 - **Current pinned commit**: see `git submodule status` from the repo root, or `git -C services/mcp-anylist log -1`.
 
 ## Already has, out of the box
