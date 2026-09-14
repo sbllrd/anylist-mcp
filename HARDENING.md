@@ -44,6 +44,28 @@ Live on a named Cloudflare Tunnel (2026-09-14) — `anylist.bllrd.co`, provision
 - [x] `chmod 600` on `.env` — was `644` (world-readable), fixed 2026-09-14; git-ignored confirmed via the submodule's own `.gitignore` (`git check-ignore -v .env`)
 - [ ] Consider a dedicated AnyList account/password rather than reuse, given it sits in plaintext on the host — **deliberately deferred**: using the real/existing household account for now, since the whole point is acting on real lists.
 
+## Machine-to-machine auth (for the orchestrator, not a browser client)
+
+The orchestrator (`orchestrator/zeroclaw`) needs to call this server directly, but its MCP client only supports a **static** `Authorization` header — no OAuth refresh loop like a browser-based client (claude.ai, Home Assistant) has. That ruled out the normal `authorization_code` flow (1-hour access tokens, refresh required).
+
+Fixed 2026-09-14 (see git log): the server already had a dormant `client_credentials` grant and a `scripts/create-client.js` provisioning script for confidential OAuth clients — neither was ever wired to anything, and the grant minted the same 1-hour token as the browser flow. Two small changes:
+- `saveOAuthTokens` takes an optional `accessTtlSeconds` (default unchanged, `3600`, for the browser flow).
+- `handleClientCredentialsGrant` now requests a 180-day TTL — long enough to not be an operational burden on an always-on box, short enough to force a conscious rotation rather than a de-facto permanent credential.
+
+**Provisioning a service token** (run once, from the host, human-run — not scripted through an agent):
+```
+docker exec mcp-anylist-anylist-mcp-1 node scripts/create-client.js <your-email> "orchestrator-gandalf"
+# prints client_id + client_secret ONCE — not retrievable afterward
+
+curl -s -X POST https://anylist.bllrd.co/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{"grant_type":"client_credentials","client_id":"<id>","client_secret":"<secret>"}'
+# returns {"access_token": "...", "expires_in": 15552000, ...}
+```
+Save the `client_id`/`client_secret` somewhere safe — they let you mint a fresh `access_token` again in 180 days without re-running the provisioning script. The `access_token` itself is what goes into ZeroClaw's `mcp.servers.anylist.headers.Authorization` (as `Bearer <token>`), set via ZeroClaw's own masked `config set` prompt — never pasted into a chat or committed. See `orchestrator/HARDENING.md`'s MCP section.
+
+**Provisioned so far**: one confidential client, `client_id` starting `a042be95…`, `client_name = "orchestrator-gandalf"`, scoped to `sballard19@gmail.com`'s account. Revoke by deleting its row from `oauth_clients` in the server's SQLite DB if it's ever compromised or no longer needed — there's no CLI/HTTP revoke path yet, only manual DB access (`docker exec ... sqlite3 /data/anylist-mcp.db "DELETE FROM oauth_clients WHERE client_id = '...'"`).
+
 ## Testable now, no hardware needed
 
 Fully testable via Docker on any dev machine — this doesn't require the Mac Mini at all except for the final always-on deployment.
