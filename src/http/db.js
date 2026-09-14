@@ -247,7 +247,7 @@ export function consumeOAuthCode(code) {
 
 // ── OAuth token queries ───────────────────────────────────────────────────────
 
-export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, scope }) {
+export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, scope, accessTtlSeconds }) {
   const now = Math.floor(Date.now() / 1000);
   getDb().prepare(`
     INSERT INTO oauth_tokens
@@ -259,8 +259,8 @@ export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, s
     userId,
     clientId,
     scope || null,
-    now + 3600,          // access token: 1 hour
-    now + 86400 * 30     // refresh token: 30 days
+    now + (accessTtlSeconds || 3600),   // access token: 1 hour by default
+    now + 86400 * 30                    // refresh token: 30 days
   );
 }
 

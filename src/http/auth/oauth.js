@@ -16,6 +16,14 @@ import {
 import { loginWithPassword, registerWithPassword } from "./providers/password.js";
 import { loginWithGoogle, isGoogleEnabled } from "./providers/google.js";
 
+// client_credentials is the machine-to-machine grant (confidential clients
+// provisioned via scripts/create-client.js) — unlike the browser
+// authorization_code flow, an M2M caller has no interactive way to complete
+// a refresh_token exchange, so its access token needs to actually outlive a
+// realistic "always-on" gap between manual rotations rather than the 1-hour
+// default tuned for browser clients that do refresh.
+const M2M_ACCESS_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 180; // 180 days
+
 function renderLogin(res, error = "") {
   res.render("login", {
     error,
@@ -247,13 +255,14 @@ async function handleClientCredentialsGrant(req, res) {
     userId: client.user_id,
     clientId: client_id,
     scope: "mcp",
+    accessTtlSeconds: M2M_ACCESS_TOKEN_TTL_SECONDS,
   });
 
-  console.log(`[oauth] client_credentials token issued for client_id=${client_id.slice(0, 8)}… user_id=${client.user_id}`);
+  console.log(`[oauth] client_credentials token issued for client_id=${client_id.slice(0, 8)}… user_id=${client.user_id} ttl_days=${M2M_ACCESS_TOKEN_TTL_SECONDS / 86400}`);
   res.json({
     access_token: accessToken,
     token_type: "Bearer",
-    expires_in: 3600,
+    expires_in: M2M_ACCESS_TOKEN_TTL_SECONDS,
     scope: "mcp",
   });
 }
