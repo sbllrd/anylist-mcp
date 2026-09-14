@@ -32,6 +32,8 @@ This file is ours, not upstream's — kept separate from `README.md` (upstream's
 
 Live on a named Cloudflare Tunnel (2026-09-14) — `anylist.bllrd.co`, provisioned via `infra/cloudflare/terraform/` (`module "anylist"`), running `--profile cloudflare-named`. Re-verified end-to-end first on the quick tunnel (Docker build + a live Claude custom connector, real AnyList account, a real `shopping` tool call succeeded from a claude.ai chat), then moved to the named tunnel.
 
+**Re-verified again (2026-09-14, second pass)**: both containers up and healthy (`docker ps` — `anylist-mcp` reporting `(healthy)`, `cloudflared-named` showing 4 registered QUIC connections to the Cloudflare edge), `GET https://anylist.bllrd.co/health` → `200 {"status":"ok"}`, `GET /mcp` → `401` (correct — unauthenticated), `GET /login` → `200`, `GET /setup` → `302`. The Claude connector in this session reported a `502` at session start; infra was fully healthy by the time this was checked minutes later, so treated as transient (a mid-request tunnel reconnect, most likely) rather than a real outage — worth another look if it recurs. Reconnecting the connector itself is a client-side action (claude.ai/Desktop settings), not something checkable from here.
+
 ## Hardening steps for the real deployment (beyond the quick-tunnel test setup)
 
 - [x] **Non-root container user** — fixed: `Dockerfile` had no `USER` directive (ran as root). Added `chown -R node:node` + `USER node` before `CMD`, using the unprivileged user the `node:22-alpine` base image already ships. Verified via `docker compose exec anylist-mcp whoami` → `node`.
@@ -39,7 +41,7 @@ Live on a named Cloudflare Tunnel (2026-09-14) — `anylist.bllrd.co`, provision
 - [x] Swap the quick/temporary Cloudflare tunnel for a **named tunnel** on a real subdomain — done: `anylist.bllrd.co`, via `infra/cloudflare/terraform/` (`module "anylist"`). DNS delegated to Cloudflare at the registrar; DNSSEC enabled.
 - [x] ~~Add Cloudflare Access with a Service Token requirement in front of it~~ — **tried and reverted**: a service-token-only Access policy on `/setup`/`/login` returns a dead-end 403 for any browser (no fallback login for a human — service tokens are machine-to-machine only). Confirmed live, then removed (`access_protected_paths = []` in `main.tf`). AnyList runs with **no Cloudflare Access layer** — its own `allowed-emails.txt` + password auth gates registration, and `/mcp` is separately protected by its own OAuth bearer token. See `infra/cloudflare/terraform/modules/mcp-tunnel/variables.tf` for the corrected module semantics this bug produced.
 - [ ] Rotate `SERVER_SECRET_KEY` / `SESSION_SECRET` from whatever was used in early testing — regenerate both with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` before any real/production deployment. **Rotating `SERVER_SECRET_KEY` invalidates every already-stored encrypted AnyList credential** (it's the AES-256-GCM key protecting them at rest) — anyone registered will need to redo `/setup` after a rotation.
-- [ ] `chmod 600` on `.env`, confirm it's git-ignored (it is, per root `.gitignore`)
+- [x] `chmod 600` on `.env` — was `644` (world-readable), fixed 2026-09-14; git-ignored confirmed via the submodule's own `.gitignore` (`git check-ignore -v .env`)
 - [ ] Consider a dedicated AnyList account/password rather than reuse, given it sits in plaintext on the host — **deliberately deferred**: using the real/existing household account for now, since the whole point is acting on real lists.
 
 ## Testable now, no hardware needed
