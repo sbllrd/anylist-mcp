@@ -69,3 +69,7 @@ Save the `client_id`/`client_secret` somewhere safe — they let you mint a fres
 ## Testable now, no hardware needed
 
 Fully testable via Docker on any dev machine — this doesn't require the Mac Mini at all except for the final always-on deployment.
+
+## Logging integration: none, deliberately
+
+Don't add a `services/logging` dependency or `log_execution()` calls into this vendored source. `execution_logs` rows for every call to this server are the orchestrator's job (it's the MCP client making the calls) — adding logging here would mean maintaining a diff from upstream for something the orchestrator already covers, which cuts against the whole point of the single-directory vendoring pattern (hardening commits only, kept minimal and rebasable). See `orchestrator/README.md`'s Logging integration section.
