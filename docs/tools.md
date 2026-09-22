@@ -25,20 +25,29 @@ Manage shopping lists and items.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `action` | enum | Yes | See actions below |
-| `list_name` | string | No | Target list (defaults to configured default) |
+| `list_name` | string | No | Target list (defaults to configured default). For create_list, the name of the new list; for rename_list, the existing list to rename |
 | `name` | string | For item actions | Item name |
 | `quantity` | number | No | Item quantity (add_item only, default 1) |
 | `notes` | string | No | Item notes (add_item only) |
 | `include_checked` | boolean | No | Include checked-off items (list_items only) |
 | `include_notes` | boolean | No | Include item notes in output (list_items only) |
 | `store_name` | string | No | Filter items by store (add_items, set_item_category only) |
-| `category` | string | No | Category for item (add_item only) |
+| `category` | string | No | Category for item (add_item, add_items only) — a built-in category slug or the name of an existing custom category |
+| `category_name` | string | For category actions | Category to act on (create_category, rename_category, delete_category) |
+| `new_category_name` | string | For rename_category | New name for the category |
+| `new_list_name` | string | For rename_list | New name for the list |
 
 **Actions:**
 
 ```json
 // List all shopping lists with item counts
 { "name": "shopping", "arguments": { "action": "list_lists" } }
+
+// Create a new list
+{ "name": "shopping", "arguments": { "action": "create_list", "list_name": "Camping Trip" } }
+
+// Rename an existing list
+{ "name": "shopping", "arguments": { "action": "rename_list", "list_name": "Camping Trip", "new_list_name": "Weekend Camping" } }
 
 // List items on a list, grouped by category
 { "name": "shopping", "arguments": { "action": "list_items", "list_name": "Costco", "include_notes": true } }
@@ -64,7 +73,20 @@ Manage shopping lists and items.
 // Set store for an item
 { "name": "shopping", "arguments": { "action": "set_item_store", "name": "Milk", "store_name": "Costco" } }
 
-// Set category for an item
+// Add an item to a custom category (create it first if it doesn't exist yet)
+{ "name": "shopping", "arguments": { "action": "add_item", "name": "Corn", "category": "Farmers Market" } }
+
+// List categories (built-in and custom) on a list
+{ "name": "shopping", "arguments": { "action": "list_categories" } }
+
+// Create a custom category
+{ "name": "shopping", "arguments": { "action": "create_category", "category_name": "Farmers Market" } }
+
+// Rename a custom category (built-in categories can't be renamed)
+{ "name": "shopping", "arguments": { "action": "rename_category", "category_name": "Farmers Market", "new_category_name": "Local Produce" } }
+
+// Delete a custom category (built-in categories can't be deleted)
+{ "name": "shopping", "arguments": { "action": "delete_category", "category_name": "Local Produce" } }
 ```
 
 ---

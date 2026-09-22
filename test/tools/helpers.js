@@ -39,6 +39,7 @@ export class MockAnyListClient {
     this._collections = [];
     this._pendingImport = null;
     this._stores = [];
+    this._categories = [];
   }
 
   reset() {
@@ -55,6 +56,7 @@ export class MockAnyListClient {
     this._collections = [];
     this._pendingImport = null;
     this._stores = [];
+    this._categories = [];
   }
 
   async connect(listName = null) {
@@ -73,6 +75,18 @@ export class MockAnyListClient {
 
   getLists() { return this._lists; }
   getStores() { return this._stores || []; }
+
+  async createList(name) {
+    const list = { identifier: `list-${this._lists.length + 1}`, name, uncheckedCount: 0 };
+    this._lists.push(list);
+    return list;
+  }
+
+  async renameList(newName) {
+    if (!this.targetList) throw new Error('Not connected to any list. Call connect() first.');
+    this.targetList.name = newName;
+    return this.targetList;
+  }
 
   async addItem(name, qty, notes, category, store = null) {
     this._items.push({ name, quantity: qty, notes, category, store });
@@ -113,6 +127,29 @@ export class MockAnyListClient {
     const item = this._items.find(i => i.name === name);
     if (!item) throw new Error(`Item "${name}" not found in list`);
     item.store = store || null;
+  }
+
+  getCategories() { return this._categories; }
+
+  async createCategory(name) {
+    const category = { identifier: `cat-${this._categories.length + 1}`, name, systemCategory: null };
+    this._categories.push(category);
+    return category;
+  }
+
+  async renameCategory(name, newName) {
+    const category = this._categories.find(c => c.name.toLowerCase() === name.toLowerCase());
+    if (!category) throw new Error(`Category "${name}" not found`);
+    if (category.systemCategory) throw new Error(`"${name}" is a built-in AnyList category and can't be renamed`);
+    category.name = newName;
+    return category;
+  }
+
+  async deleteCategory(name) {
+    const idx = this._categories.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
+    if (idx === -1) throw new Error(`Category "${name}" not found`);
+    if (this._categories[idx].systemCategory) throw new Error(`"${name}" is a built-in AnyList category and can't be deleted`);
+    this._categories.splice(idx, 1);
   }
 
   async getFavoriteItems() { return this._favorites; }

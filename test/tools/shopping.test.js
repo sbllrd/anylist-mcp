@@ -44,13 +44,17 @@ describe('shopping tool', () => {
       assert.equal(client._items[0].category, 'produce');
     });
 
-    it('should return error for invalid category', async () => {
-      try {
-        await handlers.shopping({ action: 'add_item', name: 'Soda', category: 'invalid-category' });
-        assert.fail('Expected error for invalid category');
-      } catch (e) {
-        assert.ok(e.message.includes('Invalid input for field "category"'));
-      }
+    it('should return error for an unresolvable category', async () => {
+      const result = await handlers.shopping({ action: 'add_item', name: 'Soda', category: 'invalid-category' });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes('Category "invalid-category" not found'));
+      assert.equal(client._items.length, 0);
+    });
+
+    it('should assign an item to an existing custom category by name', async () => {
+      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null });
+      await handlers.shopping({ action: 'add_item', name: 'Corn', category: 'Farmers Market' });
+      assert.equal(client._items[0].category, 'cat-1');
     });
   });
 
@@ -99,14 +103,20 @@ describe('shopping tool', () => {
       assert.deepEqual(client._items.map(i => i.name), ['Milk', 'Bread']);
     });
 
-    it('rejects an invalid category without aborting the batch', async () => {
+    it('rejects an unresolvable category without aborting the batch', async () => {
       const result = await handlers.shopping({
         action: 'add_items',
         items: [{ name: 'Soda', category: 'invalid-category' }, 'Milk'],
       });
       assert.equal(result.isError, true);
-      assert.ok(result.content[0].text.includes('invalid category "invalid-category"'));
+      assert.ok(result.content[0].text.includes('Category "invalid-category" not found'));
       assert.deepEqual(client._items.map(i => i.name), ['Milk']);
+    });
+
+    it('assigns items to an existing custom category by name', async () => {
+      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null });
+      await handlers.shopping({ action: 'add_items', items: [{ name: 'Corn', category: 'Farmers Market' }] });
+      assert.equal(client._items[0].category, 'cat-1');
     });
 
     it('assigns a store to an item', async () => {
@@ -260,6 +270,25 @@ describe('shopping tool', () => {
     });
   });
 
+  describe('create_list', () => {
+    it('creates a new list', async () => {
+      const result = await handlers.shopping({ action: 'create_list', list_name: 'Camping Trip' });
+      assert.ok(result.content[0].text.includes('Successfully created list "Camping Trip"'));
+      assert.equal(client._lists.length, 1);
+      assert.equal(client._lists[0].name, 'Camping Trip');
+    });
+  });
+
+  describe('rename_list', () => {
+    it('renames an existing list', async () => {
+      const result = await handlers.shopping({
+        action: 'rename_list', list_name: 'Groceries', new_list_name: 'Weekly Groceries',
+      });
+      assert.ok(result.content[0].text.includes('Successfully renamed list "Groceries" to "Weekly Groceries"'));
+      assert.equal(client.targetList.name, 'Weekly Groceries');
+    });
+  });
+
   describe('get_favorites', () => {
     it('returns empty message when no favorites', async () => {
       const result = await handlers.shopping({ action: 'get_favorites' });
@@ -284,6 +313,84 @@ describe('shopping tool', () => {
       client._recents = [{ name: 'Avocado' }];
       const result = await handlers.shopping({ action: 'get_recents' });
       assert.ok(result.content[0].text.includes('Avocado'));
+    });
+  });
+
+  describe('list_categories', () => {
+    it('returns empty message when no categories', async () => {
+      const result = await handlers.shopping({ action: 'list_categories' });
+      assert.ok(result.content[0].text.includes('No categories found'));
+    });
+
+    it('lists categories, flagging custom ones', async () => {
+      client._categories = [
+        { name: 'Produce', systemCategory: 'produce' },
+        { name: 'Farmers Market', systemCategory: null },
+      ];
+      const result = await handlers.shopping({ action: 'list_categories' });
+      assert.ok(result.content[0].text.includes('Produce'));
+      assert.ok(!result.content[0].text.includes('Produce (custom)'));
+      assert.ok(result.content[0].text.includes('Farmers Market (custom)'));
+    });
+  });
+
+  describe('create_category', () => {
+    it('creates a custom category', async () => {
+      const result = await handlers.shopping({ action: 'create_category', category_name: 'Farmers Market' });
+      assert.ok(result.content[0].text.includes('Successfully created category "Farmers Market"'));
+      assert.equal(client._categories.length, 1);
+      assert.equal(client._categories[0].name, 'Farmers Market');
+    });
+  });
+
+  describe('rename_category', () => {
+    it('renames a custom category', async () => {
+      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null });
+      const result = await handlers.shopping({
+        action: 'rename_category', category_name: 'Farmers Market', new_category_name: 'Local Produce',
+      });
+      assert.ok(result.content[0].text.includes('Successfully renamed category "Farmers Market" to "Local Produce"'));
+      assert.equal(client._categories[0].name, 'Local Produce');
+    });
+
+    it('refuses to rename a built-in category', async () => {
+      client._categories.push({ identifier: 'cat-1', name: 'Produce', systemCategory: 'produce' });
+      const result = await handlers.shopping({
+        action: 'rename_category', category_name: 'Produce', new_category_name: 'Fresh Produce',
+      });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes("can't be renamed"));
+    });
+
+    it('returns error for non-existent category', async () => {
+      const result = await handlers.shopping({
+        action: 'rename_category', category_name: 'Ghost', new_category_name: 'Nope',
+      });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes('not found'));
+    });
+  });
+
+  describe('delete_category', () => {
+    it('deletes a custom category', async () => {
+      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null });
+      const result = await handlers.shopping({ action: 'delete_category', category_name: 'Farmers Market' });
+      assert.ok(result.content[0].text.includes('Successfully deleted category "Farmers Market"'));
+      assert.equal(client._categories.length, 0);
+    });
+
+    it('refuses to delete a built-in category', async () => {
+      client._categories.push({ identifier: 'cat-1', name: 'Produce', systemCategory: 'produce' });
+      const result = await handlers.shopping({ action: 'delete_category', category_name: 'Produce' });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes("can't be deleted"));
+      assert.equal(client._categories.length, 1);
+    });
+
+    it('returns error for non-existent category', async () => {
+      const result = await handlers.shopping({ action: 'delete_category', category_name: 'Ghost' });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes('not found'));
     });
   });
 });

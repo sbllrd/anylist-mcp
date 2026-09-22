@@ -15,16 +15,35 @@ class AnyListClient {
     this.defaultListName = defaultListName || null;
   }
 
-  async connect(listName = null) {
+  // Authenticate and load the account's lists, without resolving to any
+  // particular target list. Split out of connect() so actions that don't
+  // operate on an existing list (e.g. createList) can authenticate too.
+  async _authenticate() {
+    if (this.client) return;
+
     const username = this._username || process.env.ANYLIST_USERNAME;
     const password = this._password || process.env.ANYLIST_PASSWORD;
-    const targetListName = listName || this.defaultListName || process.env.ANYLIST_LIST_NAME;
 
     if (!username || !password) {
       const error = new Error('Missing AnyList credentials. Provide username and password.');
       console.error(error.message);
       throw error;
     }
+
+    this.client = new AnyList({
+      email: username,
+      password: password
+    });
+
+    console.error(`Connecting to AnyList as ${username}...`);
+    await this.client.login();
+    console.error('Successfully authenticated with AnyList');
+
+    await this.client.getLists();
+  }
+
+  async connect(listName = null) {
+    const targetListName = listName || this.defaultListName || process.env.ANYLIST_LIST_NAME;
 
     if (!targetListName) {
       const error = new Error('No list name provided and no default list configured');
@@ -38,20 +57,7 @@ class AnyListClient {
     }
 
     try {
-      // Create AnyList client if not already authenticated
-      if (!this.client) {
-        this.client = new AnyList({
-          email: username,
-          password: password
-        });
-
-        // Authenticate
-        console.error(`Connecting to AnyList as ${username}...`);
-        await this.client.login();
-        console.error('Successfully authenticated with AnyList');
-
-        await this.client.getLists();
-      }
+      await this._authenticate();
 
       // Find the target list
       console.error(`Looking for list: "${targetListName}"`);
@@ -77,6 +83,32 @@ class AnyListClient {
   getAvailableListNames() {
     if (!this.client || !this.client.lists) return [];
     return this.client.lists.map(list => list.name);
+  }
+
+  async createList(listName) {
+    await this._authenticate();
+    try {
+      const list = await this.client.createList(listName);
+      console.error(`Created list: ${list.name}`);
+      return list;
+    } catch (error) {
+      throw new Error(`Failed to create list "${listName}": ${error.message}`);
+    }
+  }
+
+  // Renames the currently connected list (connect() to the list you want to
+  // rename first, same as the per-list category actions).
+  async renameList(newName) {
+    if (!this.targetList) {
+      throw new Error('Not connected to any list. Call connect() first.');
+    }
+    try {
+      const renamed = await this.client.renameList(this.targetList.identifier, newName);
+      console.error(`Renamed list "${this.targetList.name}" to "${renamed.name}"`);
+      return renamed;
+    } catch (error) {
+      throw new Error(`Failed to rename list to "${newName}": ${error.message}`);
+    }
   }
 
   getLists() {
@@ -369,6 +401,71 @@ class AnyListClient {
       console.error(`Deleted store: ${storeName}`);
     } catch (error) {
       throw new Error(`Failed to delete store "${storeName}": ${error.message}`);
+    }
+  }
+
+  getCategories() {
+    if (!this.targetList) {
+      throw new Error('Not connected to any list. Call connect() first.');
+    }
+    const categories = [];
+    for (const group of this.targetList.categoryGroups || []) {
+      for (const category of group.categories || []) {
+        categories.push(category);
+      }
+    }
+    return categories;
+  }
+
+  async createCategory(categoryName) {
+    if (!this.targetList) {
+      throw new Error('Not connected to any list. Call connect() first.');
+    }
+    try {
+      const category = await this.targetList.createCategory({ name: categoryName });
+      console.error(`Created category: ${category.name}`);
+      return category;
+    } catch (error) {
+      throw new Error(`Failed to create category "${categoryName}": ${error.message}`);
+    }
+  }
+
+  async renameCategory(categoryName, newName) {
+    if (!this.targetList) {
+      throw new Error('Not connected to any list. Call connect() first.');
+    }
+    const found = this.targetList.findCategoryByName(categoryName);
+    if (!found) {
+      throw new Error(`Category "${categoryName}" not found`);
+    }
+    if (found.category.systemCategory) {
+      throw new Error(`"${categoryName}" is a built-in AnyList category and can't be renamed`);
+    }
+    try {
+      const updated = await this.targetList.renameCategory(found.category.identifier, newName);
+      console.error(`Renamed category "${categoryName}" to "${updated.name}"`);
+      return updated;
+    } catch (error) {
+      throw new Error(`Failed to rename category "${categoryName}": ${error.message}`);
+    }
+  }
+
+  async deleteCategory(categoryName) {
+    if (!this.targetList) {
+      throw new Error('Not connected to any list. Call connect() first.');
+    }
+    const found = this.targetList.findCategoryByName(categoryName);
+    if (!found) {
+      throw new Error(`Category "${categoryName}" not found`);
+    }
+    if (found.category.systemCategory) {
+      throw new Error(`"${categoryName}" is a built-in AnyList category and can't be deleted`);
+    }
+    try {
+      await this.targetList.removeCategory(found.category.identifier);
+      console.error(`Deleted category: ${categoryName}`);
+    } catch (error) {
+      throw new Error(`Failed to delete category "${categoryName}": ${error.message}`);
     }
   }
 
