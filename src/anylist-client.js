@@ -1,6 +1,12 @@
 import AnyList from '../anylist-js/lib/index.js';
 import { normalizeRecipe } from './recipe-normalizer.js';
 
+// Mirrors src/tools/shopping.js's slugify — kept local to avoid a
+// tools/ -> client dependency inversion for a 1-line pure function.
+function slugify(name) {
+  return String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
 class AnyListClient {
   /**
    * @param {{ username?: string, password?: string, defaultListName?: string }} [credentials]
@@ -316,13 +322,28 @@ class AnyListClient {
         ? items
         : items.filter(item => !item.checked);
 
+      // categoryMatchId is a snapshot slug taken when the item was last
+      // assigned to a custom category — it isn't updated when that category
+      // is later renamed or deleted, so it can go stale ("phantom"
+      // categories). categoryAssignments (categoryGroupId + categoryId)
+      // is the live foreign key AnyList itself keeps in sync, so resolve
+      // custom-category items against the list's *current* categories via
+      // that instead, falling back to categoryMatchId only for built-in
+      // categories (which don't use categoryAssignments at all).
+      const currentCategoriesById = new Map(this.getCategories().map(c => [c.identifier, c]));
+
       // Map to a clean format
       return filteredItems.map(item => {
+        const assignment = (item.categoryAssignments || [])[0];
+        const currentCategory = assignment && currentCategoriesById.get(assignment.categoryId);
+        const category = currentCategory
+          ? slugify(currentCategory.name)
+          : (item.categoryMatchId || 'other');
         const result = {
           name: item.name,
           quantity: item.quantity ?? null,
           checked: item.checked || false,
-          category: item.categoryMatchId || 'other'
+          category
         };
         if (includeNotes && item.details) {
           result.note = item.details;
