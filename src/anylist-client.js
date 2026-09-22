@@ -127,7 +127,13 @@ class AnyListClient {
   // op (see Item.assignToCustomCategory), which is unsafe until Item._encode
   // round-trips recipeId / rawIngredient / prices / photoIds. Workaround for
   // callers: delete the item and re-add it with the new quantity.
-  async addItem(itemName, quantity = 1, notes = null, category = "other", store = null) {
+  // categoryAssignment ({categoryGroupId, categoryId}), when given, is only applied
+  // to a brand-new item, not an existing one: Item.assignToCustomCategory
+  // re-encodes the whole item (see the "Known limitation" comment just below),
+  // and Item doesn't track recipeId/prices/photoIds, so running it against an
+  // EXISTING item could silently drop those. A freshly created item has none
+  // to lose.
+  async addItem(itemName, quantity = 1, notes = null, category = "other", store = null, categoryAssignment = null) {
     if (!this.targetList) {
       const error = new Error('Not connected to any list. Call connect() first.');
       console.error(error.message);
@@ -183,6 +189,15 @@ class AnyListClient {
         await this.targetList.addItem(newItem);
 
         console.error(`Added new item: ${newItem.name}`);
+
+        if (categoryAssignment) {
+          await newItem.assignToCustomCategory({
+            categoryGroupId: categoryAssignment.categoryGroupId,
+            categoryId: categoryAssignment.categoryId,
+            matchId: category,
+          });
+          console.error(`Assigned "${newItem.name}" to custom category`);
+        }
       }
 
       if (store) {

@@ -44,8 +44,15 @@ async function validateStoreName(client, storeName) {
   return { valid: true, message: null };
 }
 
-// Resolves a category name to the categoryMatchId addItem expects: a built-in
-// slug is used as-is, a custom category name is looked up by identifier.
+function slugify(name) {
+  return String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+// Resolves a category name for addItem: a built-in slug is used as-is (via
+// categoryMatchId alone, unchanged). A custom category additionally needs a
+// categoryAssignment (categoryGroupId + categoryId) — categoryMatchId alone
+// only creates a "shadow" entry AnyList doesn't recognize as real
+// category-group membership (see Item.assignToCustomCategory's docblock).
 async function resolveCategoryMatchId(client, categoryName) {
   if (!categoryName || categoryName === "other") return { matchId: "other", message: null };
   if (valid_categories.includes(categoryName)) return { matchId: categoryName, message: null };
@@ -57,7 +64,11 @@ async function resolveCategoryMatchId(client, categoryName) {
     const customList = customNames.length > 0 ? ` Custom categories on this list: ${customNames.join(", ")}.` : '';
     return { matchId: null, message: `Category "${categoryName}" not found. Built-in categories: ${valid_categories.join(", ")}.${customList}` };
   }
-  return { matchId: match.identifier, message: null };
+  return {
+    matchId: match.systemCategory || slugify(match.name),
+    categoryAssignment: { categoryGroupId: match.categoryGroupId, categoryId: match.identifier },
+    message: null,
+  };
 }
 
 export function register(server, getClient) {
@@ -205,10 +216,10 @@ export function register(server, getClient) {
           if (!valid)
             return errorResponse(message);
 
-          const { matchId, message: categoryError } = await resolveCategoryMatchId(client, params.category);
+          const { matchId, categoryAssignment, message: categoryError } = await resolveCategoryMatchId(client, params.category);
           if (categoryError) return errorResponse(categoryError);
 
-          await client.addItem(itemName, quantity || 1, notes || null, matchId, params.store_name || null);
+          await client.addItem(itemName, quantity || 1, notes || null, matchId, params.store_name || null, categoryAssignment || null);
           return textResponse(`Successfully added "${itemName}" to list "${client.targetList.name}"`);
         }
         case "add_items": {
@@ -220,11 +231,11 @@ export function register(server, getClient) {
           for (const entry of entries) {
             const item = typeof entry === "string" ? { name: entry } : entry;
             try {
-              const { matchId, message: categoryError } = await resolveCategoryMatchId(client, item.category);
+              const { matchId, categoryAssignment, message: categoryError } = await resolveCategoryMatchId(client, item.category);
               if (categoryError) throw new Error(categoryError);
               const { valid, message } = await validateStoreName(client, item.store_name);
               if (!valid) throw new Error(message);
-              await client.addItem(item.name, item.quantity || 1, item.notes || null, matchId, item.store_name || null);
+              await client.addItem(item.name, item.quantity || 1, item.notes || null, matchId, item.store_name || null, categoryAssignment || null);
               added.push(item.name);
             } catch (error) {
               failed.push(`${item.name}: ${error.message}`);

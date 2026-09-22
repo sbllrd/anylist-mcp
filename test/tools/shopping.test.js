@@ -52,9 +52,12 @@ describe('shopping tool', () => {
     });
 
     it('should assign an item to an existing custom category by name', async () => {
-      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null });
+      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null, categoryGroupId: 'group-1' });
       await handlers.shopping({ action: 'add_item', name: 'Corn', category: 'Farmers Market' });
-      assert.equal(client._items[0].category, 'cat-1');
+      // categoryMatchId alone creates a "shadow" entry AnyList doesn't recognize
+      // as real group membership — the real assignment travels via categoryAssignment.
+      assert.equal(client._items[0].category, 'farmers-market');
+      assert.deepEqual(client._items[0].categoryAssignment, { categoryGroupId: 'group-1', categoryId: 'cat-1' });
     });
   });
 
@@ -114,9 +117,10 @@ describe('shopping tool', () => {
     });
 
     it('assigns items to an existing custom category by name', async () => {
-      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null });
+      client._categories.push({ identifier: 'cat-1', name: 'Farmers Market', systemCategory: null, categoryGroupId: 'group-1' });
       await handlers.shopping({ action: 'add_items', items: [{ name: 'Corn', category: 'Farmers Market' }] });
-      assert.equal(client._items[0].category, 'cat-1');
+      assert.equal(client._items[0].category, 'farmers-market');
+      assert.deepEqual(client._items[0].categoryAssignment, { categoryGroupId: 'group-1', categoryId: 'cat-1' });
     });
 
     it('assigns a store to an item', async () => {
