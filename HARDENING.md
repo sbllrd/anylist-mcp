@@ -104,7 +104,7 @@ Also noticed in passing, unrelated to this bug: `item.js` has its entire `setSto
 
 `delete_list` was deliberately left out of this pass — it needs `listFoldersResponse`/`listSettingsResponse` from user-data, which nothing in `anylist-js` currently decodes.
 
-## `list_items` phantom-category bug: fixed (read path), unverified against a live account
+## `list_items` phantom-category bug: fixed and confirmed live
 
 Bug report (2026-09-22, from "To Do Before Jamaica", 36 items): `list_items` grouped items into categories `list_categories` didn't know about (`2-3-weeks-before`, `now`, `start-now`, `travel-week`) — stable across repeat calls, so not a race, and confirmed wrong against a manual PDF export of the real list from the app.
 
@@ -112,7 +112,7 @@ Bug report (2026-09-22, from "To Do Before Jamaica", 36 items): `list_items` gro
 
 **Fix**: `getItems` now resolves each item's category by looking up `categoryAssignments[0].categoryId` against the list's *current* categories, using that category's live name (slugified, to keep the existing display format) when found, and falling back to the old `categoryMatchId` behavior only when there's no assignment (built-in categories, which don't use `categoryAssignments` at all) or the assigned category no longer exists. Verified against synthetic `targetList` data reproducing the exact bug shape (a stale `categoryMatchId` alongside a still-valid `categoryAssignments` entry) — the item now resolves to the current category instead of the phantom one.
 
-**Not yet verified against a real account.** This fix assumes items added through the real AnyList app have `categoryAssignments` populated correctly by AnyList's own client. That's a reasonable inference — `categoryAssignments` is the field the app's own category-group model is built on — but it's an inference, not a confirmed fact: the one direct measurement in this file (the "Round 2" investigation above) found `categoryAssignments` empty on every item on two test lists, though those items only ever went through *our* broken `assignToCustomCategory` write path, never the real app's. If redeploying and re-running `list_items` against "To Do Before Jamaica" still shows phantom categories, that would mean even app-added items lack `categoryAssignments`, and the real persistence mechanism for custom-category membership is still unknown (same open question as the write-side investigation above) — at that point the next step is the same one already identified there: capture real app network traffic while manually categorizing an item.
+**Confirmed live (2026-09-22)**: rebuilt and redeployed the container (`docker compose --profile cloudflare-named build/up anylist-mcp`), then re-ran `list_categories`/`list_items` against the real "To Do Before Jamaica" list through the live connector. All 4 phantom categories (`2-3-weeks-before`, `now`, `start-now`, `travel-week`) are gone; all 36 items now group under exactly the 4 real custom categories (`friday-morning`, `hygiene-routine`, `next-week`, `this-week`) that `list_categories` reports, item count unchanged. This also answers the open question from the write-path investigation above: `categoryAssignments` **is** populated correctly for items added through the real AnyList app — the earlier "empty on every item" finding was specific to items that only ever went through our own broken `assignToCustomCategory` path, not evidence the field itself is unused by AnyList's real client.
 
 ## Logging integration: none, deliberately
 
