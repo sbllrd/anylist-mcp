@@ -24,7 +24,7 @@ services:
   # Usage: docker compose --profile dev up --build
   cloudflared-temp:
     profiles: [cloudflare-temp]
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     restart: unless-stopped
     command: tunnel --no-autoupdate --url http://anylist-mcp:3000
     depends_on:
@@ -36,7 +36,7 @@ services:
   # Usage: docker compose --profile prod up
   cloudflared-named:
     profiles: [cloudflare-named]
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
