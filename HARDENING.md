@@ -41,7 +41,7 @@ Live on a named Cloudflare Tunnel (2026-09-14) — `anylist.bllrd.co`, provision
 - Fresh `/setup` registration (human), fresh `orchestrator-gandalf` client via `create-client.js`, fresh 180-day token set in ZeroClaw. Gotcha hit: a leading space pasted into `client_id` gives `invalid_client` (server logs `client not found`, with the space visible in the logged prefix).
 - Verified: 4 tunnel connections registered; `/health` 200, `/mcp` 401 unauthenticated, `/login` 200, `/setup` 302 publicly; ZeroClaw's `initialize` + `tools/list` → 200 after its service restart.
 - **Open**: `cloudflared-named` still uses `cloudflare/cloudflared:latest` — a floating tag on the container that holds the tunnel credential (pin-dependencies principle). Pin to a digest.
-- **Open**: containers restart only if Docker Desktop itself starts at login — confirm "Start Docker Desktop when you sign in" is on.
+- ~~**Open**: containers restart only if Docker Desktop itself starts at login — confirm "Start Docker Desktop when you sign in" is on.~~ **Confirmed 2026-09-24** by a Mac Mini reboot: Docker Desktop autostarted, both containers came back, `/health` 200 and `/mcp` 401 publicly.
 
 ## Hardening steps for the real deployment (beyond the quick-tunnel test setup)
 
