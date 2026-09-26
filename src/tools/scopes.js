@@ -15,6 +15,9 @@ import { textResponse, errorResponse } from "./helpers.js";
  * profile takes a commit, not an env edit.
  *
  * A tool listed as `true` has no action parameter and is allowed whole.
+ * An EXTRA_TOOLS name (e.g. shopping_delete_item) is a tool that exists
+ * only for scoped profiles. It's a single action split out of an upstream
+ * tool, so the orchestrator can gate it separately.
  */
 const SHARED_HOUSEHOLD_READ = {
   health_check: true,
@@ -31,9 +34,32 @@ export const SCOPE_PROFILES = {
   shared_household_read: SHARED_HOUSEHOLD_READ,
   // Phase 2: reads, plus create-only recipe writes. The guards below make
   // sure this profile can never overwrite, update or delete a recipe.
+  // Plus item writes on lists shared with the household (see
+  // sharedListGuard). Deleting an item is its own tool so it can require
+  // approval in the orchestrator while adds and checks stay instant.
   shared_household: {
     ...SHARED_HOUSEHOLD_READ,
     recipes: ["list", "get", "create", "import_url"],
+    shopping: [
+      ...SHARED_HOUSEHOLD_READ.shopping,
+      "add_item", "add_items", "check_item", "uncheck_item", "set_item_store",
+    ],
+    shopping_delete_item: true,
+  },
+};
+
+const EXTRA_TOOLS = {
+  shopping_delete_item: {
+    base: "shopping",
+    action: "delete_item",
+    config: {
+      title: "Delete a shopping list item",
+      description: "Permanently delete one item from a shopping list shared with the household. Only lists shared with the household can be changed. Checking an item off (shopping check_item) is usually what's wanted instead; this removes it for good.",
+      inputSchema: {
+        name: z.string().describe("Item to delete"),
+        list_name: z.string().optional().describe("List to delete from (defaults to the configured default list)"),
+      },
+    },
   },
 };
 
@@ -93,7 +119,48 @@ function normalizeUrl(raw) {
  * the call, returning null lets it through. A replacement runs instead of
  * the upstream handler entirely.
  */
+/**
+ * Item writes are only allowed on a list shared with the household's
+ * AnyList account (ANYLIST_HOUSEHOLD_SHARE_EMAIL). Sharing a list with
+ * that person in the AnyList app is what hands it to the bot, and
+ * unsharing takes it away. It resolves the same list the upstream handler
+ * will act on: the named list, or the default one, found by name the same
+ * way. Then it checks that list's live sharedUsers. The anylist library's
+ * List wrapper drops sharedUsers, so this reads the raw decoded user data
+ * (a private method of the pinned library; recheck it on upgrade).
+ */
+async function sharedLists(client) {
+  const email = (process.env.ANYLIST_HOUSEHOLD_SHARE_EMAIL || "").trim().toLowerCase();
+  if (!email) return { email: null, lists: [] };
+  const decoded = await client.client._getUserData(true);
+  const lists = decoded.shoppingListsResponse.newLists.filter(l =>
+    (l.sharedUsers || []).some(u => (u.email || "").toLowerCase() === email));
+  return { email, lists };
+}
+
+async function sharedListGuard(params, getClient) {
+  const client = await getClient();
+  const listName = params.list_name || client.defaultListName || process.env.ANYLIST_LIST_NAME;
+  if (!listName) return errorResponse("No list named and no default list configured.");
+  await client.connect(listName);
+  const target = client.client.getListByName(listName);
+  const { email, lists } = await sharedLists(client);
+  if (!email) return errorResponse("List changes are turned off: ANYLIST_HOUSEHOLD_SHARE_EMAIL isn't set on the AnyList server.");
+  if (!target || !lists.some(l => l.identifier === target.identifier)) {
+    const names = lists.map(l => l.name).join(", ") || "none";
+    return errorResponse(`"${listName}" isn't shared with the household, so this client can't change it. Lists it can change: ${names}.`);
+  }
+  return null;
+}
+
 const GUARDS = {
+  shopping: {
+    add_item: sharedListGuard,
+    add_items: sharedListGuard,
+    check_item: sharedListGuard,
+    uncheck_item: sharedListGuard,
+    set_item_store: sharedListGuard,
+  },
   recipes: {
     async create(params, getClient) {
       if (!params.name) return errorResponse('Action "create" requires parameter "name"');
@@ -105,6 +172,20 @@ const GUARDS = {
         return errorResponse(`Recipe "${match.name}" already exists. This client can only create new recipes, never overwrite one.`);
       }
       return null; // through to the upstream handler, which now can't reach its overwrite path
+    },
+  },
+};
+
+// Run after the upstream handler, to add to its reply.
+const DECORATORS = {
+  shopping: {
+    async list_lists(result, getClient) {
+      if (result.isError) return result;
+      const { email, lists } = await sharedLists(await getClient());
+      const note = email
+        ? `\n\nLists this client can change (shared with the household): ${lists.map(l => l.name).join(", ") || "none"}.`
+        : "\n\nThis client can't change any list (ANYLIST_HOUSEHOLD_SHARE_EMAIL isn't set).";
+      return { ...result, content: [...result.content, { type: "text", text: note }] };
     },
   },
 };
@@ -168,6 +249,7 @@ export function scopeServer(server, profileName, getClient) {
     };
     const guards = GUARDS[name] || {};
     const replacements = REPLACEMENTS[name] || {};
+    const decorators = DECORATORS[name] || {};
     const wrapped = async (params, extra) => {
       if (!allowed.includes(params.action)) {
         return errorResponse(`Action "${params.action}" is not permitted for this client.`);
@@ -179,9 +261,19 @@ export function scopeServer(server, profileName, getClient) {
         const refused = await guard(params, getClient);
         if (refused) return refused;
       }
-      return handler(params, extra);
+      const result = await handler(params, extra);
+      const decorate = decorators[params.action];
+      return decorate ? decorate(result, getClient) : result;
     };
     const registered = server.registerTool(name, narrowed, wrapped);
+    for (const [extraName, extraSpec] of Object.entries(EXTRA_TOOLS)) {
+      if (extraSpec.base !== name || !profile[extraName]) continue;
+      server.registerTool(extraName, extraSpec.config, async (params, extra) => {
+        const refused = await sharedListGuard(params, getClient);
+        if (refused) return refused;
+        return handler({ ...params, action: extraSpec.action }, extra);
+      });
+    }
     return {
       ...registered,
       update: (updates) => registered.update(

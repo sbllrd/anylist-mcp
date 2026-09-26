@@ -13,6 +13,8 @@ services:
       ANYLIST_SESSION_IDLE_MINUTES: ${ANYLIST_SESSION_IDLE_MINUTES:-30}
       # client_id -> scope profile JSON (src/tools/scopes.js); unmapped clients get everything
       ANYLIST_CLIENT_SCOPES: ${ANYLIST_CLIENT_SCOPES:-}
+      # The household member's AnyList email: scoped clients may change only lists shared with it
+      ANYLIST_HOUSEHOLD_SHARE_EMAIL: ${ANYLIST_HOUSEHOLD_SHARE_EMAIL:-}
       ALLOWED_EMAILS_FILE: /config/allowed-emails.txt
       NODE_ENV: production
     volumes:

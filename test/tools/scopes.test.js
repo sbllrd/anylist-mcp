@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerAllTools } from '../../src/tools/index.js';
 import { parseClientScopes, profileForClient, scopeServer } from '../../src/tools/scopes.js';
@@ -178,10 +178,103 @@ describe('shared_household profile (create-only recipes)', () => {
     assert.match(result.content[0].text, /Not imported/);
   });
 
-  it('does not expose shopping, meal plan or collection writes', async () => {
-    for (const [tool, action] of [['shopping', 'add_item'], ['meal_plan', 'create_event'], ['recipe_collections', 'create']]) {
+  it('does not expose meal plan or collection writes, or list/category management', async () => {
+    for (const [tool, action] of [['meal_plan', 'create_event'], ['recipe_collections', 'create'],
+      ['shopping', 'delete_item'], ['shopping', 'create_list'], ['shopping', 'rename_list'], ['shopping', 'delete_category']]) {
       const result = await tools[tool].handler({ action, name: 'x' });
       assert.equal(result.isError, true, `${tool}.${action}`);
     }
+  });
+});
+
+// A client whose anylist library view has lists with sharedUsers, like the
+// raw decoded user data the guard reads.
+function withSharing(client, lists) {
+  const origConnect = client.connect.bind(client);
+  client.connect = async (name) => {
+    await origConnect(name);
+    client.client = {
+      getListByName: (n) => lists.find(l => l.name === n),
+      _getUserData: async () => ({ shoppingListsResponse: { newLists: lists } }),
+    };
+    return true;
+  };
+  return client;
+}
+
+describe('shared_household profile (writes on shared lists only)', () => {
+  const LISTS = [
+    { identifier: 'l1', name: 'SamaBamaLisa', sharedUsers: [{ email: 'sam@x.test' }, { email: 'Lisa@X.test' }] },
+    { identifier: 'l2', name: 'Medicines List', sharedUsers: [{ email: 'sam@x.test' }] },
+  ];
+  let client;
+  let tools;
+  let saved;
+
+  beforeEach(() => {
+    saved = process.env.ANYLIST_HOUSEHOLD_SHARE_EMAIL;
+    process.env.ANYLIST_HOUSEHOLD_SHARE_EMAIL = 'lisa@x.test';
+    client = withSharing(new MockAnyListClient(), LISTS);
+    tools = register('shared_household', client);
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ANYLIST_HOUSEHOLD_SHARE_EMAIL;
+    else process.env.ANYLIST_HOUSEHOLD_SHARE_EMAIL = saved;
+  });
+
+  it('adds to a list shared with the household (email case-insensitive)', async () => {
+    const result = await tools.shopping.handler({ action: 'add_item', list_name: 'SamaBamaLisa', name: 'Milk' });
+    assert.equal(result.isError, undefined, result.content[0].text);
+    assert.equal(client._items.length, 1);
+  });
+
+  it('refuses writes to a list not shared with the household, naming the ones it can change', async () => {
+    for (const action of ['add_item', 'add_items', 'check_item', 'uncheck_item', 'set_item_store']) {
+      const result = await tools.shopping.handler({ action, list_name: 'Medicines List', name: 'x', items: ['x'] });
+      assert.equal(result.isError, true, action);
+      assert.match(result.content[0].text, /isn't shared with the household.*SamaBamaLisa/);
+    }
+    assert.equal(client._items.length, 0);
+  });
+
+  it('checks the default list when no list is named', async () => {
+    client.defaultListName = 'Medicines List';
+    const result = await tools.shopping.handler({ action: 'add_item', name: 'Milk' });
+    assert.equal(result.isError, true);
+  });
+
+  it('refuses every write when no household email is configured', async () => {
+    delete process.env.ANYLIST_HOUSEHOLD_SHARE_EMAIL;
+    const result = await tools.shopping.handler({ action: 'add_item', list_name: 'SamaBamaLisa', name: 'Milk' });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /turned off/);
+  });
+
+  it('still reads any list', async () => {
+    const result = await tools.shopping.handler({ action: 'list_items', list_name: 'Medicines List' });
+    assert.equal(result.isError, undefined);
+  });
+
+  it('notes which lists it can change on list_lists', async () => {
+    const result = await tools.shopping.handler({ action: 'list_lists' });
+    assert.match(result.content.at(-1).text, /can change \(shared with the household\): SamaBamaLisa\./);
+  });
+
+  it('exposes item deletion as its own tool, on shared lists only', async () => {
+    assert.ok(tools.shopping_delete_item);
+    client._items.push({ name: 'Milk', checked: false });
+    const refused = await tools.shopping_delete_item.handler({ list_name: 'Medicines List', name: 'Milk' });
+    assert.equal(refused.isError, true);
+    assert.equal(client._items.length, 1);
+    const ok = await tools.shopping_delete_item.handler({ list_name: 'SamaBamaLisa', name: 'Milk' });
+    assert.equal(ok.isError, undefined, ok.content[0].text);
+    assert.equal(client._items.length, 0);
+  });
+
+  it('gives the read-only profile no delete tool and no shopping writes', () => {
+    const readTools = register('shared_household_read', withSharing(new MockAnyListClient(), LISTS));
+    assert.equal(readTools.shopping_delete_item, undefined);
+    assert.ok(!readTools.shopping.config.inputSchema.action.options.includes('add_item'));
   });
 });

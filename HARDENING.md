@@ -87,6 +87,13 @@ Added 2026-09-26. Before this, every OAuth client got every tool and action: `re
   - `create` refuses a name that already exists (case-insensitive). Upstream would elicit and then delete the old recipe first.
   - `import_url` is replaced outright. It accepts public http(s) URLs only (no loopback, private, link-local or `.local` hosts). It refuses a URL whose normalized form (no `utm_*`, fragment, `www.` or trailing slash) is already some recipe's `sourceUrl`. It calls `importRecipeFromUrl(url, { strict: true })`, which uses AnyList's native importer only (no heuristic HTML fallback, which can save a page that isn't a recipe) and refuses a name that already exists.
   - `update`, `delete` and `normalize` stay unreachable.
+- `shared_household` also allows item changes on **shared lists only** (added 2026-09-26):
+  - `shopping` `add_item`, `add_items`, `check_item`, `uncheck_item` and `set_item_store` pass only if the target list is shared with `ANYLIST_HOUSEHOLD_SHARE_EMAIL`. The target is the named list, or the default one, found by name exactly as the upstream handler finds it. Sharing is checked live on every call.
+  - Sharing a list with that person in the AnyList app is the whole configuration, and unsharing revokes it. With the variable unset, every change is refused.
+  - `list_lists` ends with the lists the client can change.
+  - Deleting an item is a separate tool, `shopping_delete_item`, registered only for this profile, with the same shared-list check. It's separate so the orchestrator can require approval for deletes alone.
+  - List and category management (`create_list`, `rename_list`, `*_category`) stays unreachable.
+  - The sharing data comes from the anylist library's raw decoded user data (`client._getUserData`, a private method), because its `List` wrapper drops `sharedUsers`. Recheck this after upgrading the library.
 - Tests: `test/tools/scopes.test.js`. There's no Node on the Mac Mini host, so run the suite in a container: `docker run --rm -v "$PWD":/app:ro -w /work node:22-alpine sh -c "cd /app && tar cf - --exclude=./node_modules --exclude=./data . | (cd /work && tar xf -); cd /work && npm ci --ignore-scripts && npm test"`.
 - **Rebasing onto upstream**: the change is one new file (`src/tools/scopes.js`) plus small hunks in `src/http/index.js`, `src/http/auth/oauth.js`, `src/anylist-client.js` (the `strict` option) and `docker-compose.yml`. If upstream adds a tool, a scoped profile won't see it until it's added to that profile.
 
