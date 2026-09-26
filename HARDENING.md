@@ -75,6 +75,27 @@ Save the `client_id`/`client_secret` somewhere safe — they let you mint a fres
 
 **Provisioned so far**: one confidential client, `client_id` starting `a042be95…`, `client_name = "orchestrator-gandalf"`, scoped to `sballard19@gmail.com`'s account. Revoke by deleting its row from `oauth_clients` in the server's SQLite DB if it's ever compromised or no longer needed — there's no CLI/HTTP revoke path yet, only manual DB access (`docker exec ... sqlite3 /data/anylist-mcp.db "DELETE FROM oauth_clients WHERE client_id = '...'"`).
 
+## Per-client scope profiles (for the `shared_household` agent)
+
+Added 2026-09-26. Before this, every OAuth client got every tool and action: `requireBearerToken` only set `req.userId`. The scoped `shared_household` agent (the SamaBamaLisa Telegram bot, see `orchestrator/HARDENING.md`) needs to read everything and create recipes, and must never update, delete or overwrite. ZeroClaw gates per tool, not per action, and `recipes` mixes all of those in one `action` enum, so the restriction has to live here. Guiding principles: least privilege, code-level gates.
+
+- `requireBearerToken` also sets `req.clientId` from the token row.
+- `createMcpServer` looks up the client's profile and registers the tools through `scopeServer` (`src/tools/scopes.js`). Each tool's `action` enum is narrowed to the profile's list, and its handler re-checks the action. A tool that isn't in the profile isn't registered at all.
+- Each MCP session remembers the client that initialized it. A request with a different client's token gets a `403` on that session (Streamable HTTP and SSE both).
+- **Profiles are defined in code**: `full` (upstream behavior), `shared_household_read` (reads only) and `shared_household` (reads plus create-only recipes). The deployment only maps a `client_id` to a profile name: `ANYLIST_CLIENT_SCOPES='{"<client_id>": "shared_household_read"}'` in `.env`, passed through by `docker-compose.yml`. An unmapped client gets `full`, so `orchestrator-gandalf` is unchanged. An unknown profile name fails the boot.
+- `shared_household`'s recipe writes are create-only:
+  - `create` refuses a name that already exists (case-insensitive). Upstream would elicit and then delete the old recipe first.
+  - `import_url` is replaced outright. It accepts public http(s) URLs only (no loopback, private, link-local or `.local` hosts). It refuses a URL whose normalized form (no `utm_*`, fragment, `www.` or trailing slash) is already some recipe's `sourceUrl`. It calls `importRecipeFromUrl(url, { strict: true })`, which uses AnyList's native importer only (no heuristic HTML fallback, which can save a page that isn't a recipe) and refuses a name that already exists.
+  - `update`, `delete` and `normalize` stay unreachable.
+- Tests: `test/tools/scopes.test.js`. There's no Node on the Mac Mini host, so run the suite in a container: `docker run --rm -v "$PWD":/app:ro -w /work node:22-alpine sh -c "cd /app && tar cf - --exclude=./node_modules --exclude=./data . | (cd /work && tar xf -); cd /work && npm ci --ignore-scripts && npm test"`.
+- **Rebasing onto upstream**: the change is one new file (`src/tools/scopes.js`) plus small hunks in `src/http/index.js`, `src/http/auth/oauth.js`, `src/anylist-client.js` (the `strict` option) and `docker-compose.yml`. If upstream adds a tool, a scoped profile won't see it until it's added to that profile.
+
+**Provisioning the scoped clients.** Same flow as above, one client per consumer so each can be revoked separately:
+- `create-client.js <email> "shared-household-agent"`: the ZeroClaw `anylist_shared` server's token.
+- `create-client.js <email> "shared-household-intake"`: `services/recipe-intake`'s token (Phase 3).
+
+Map both client IDs in `ANYLIST_CLIENT_SCOPES`, then `docker compose up -d --build anylist-mcp`. Start both on `shared_household_read`, and switch them to `shared_household` once the read path is verified (read-only first).
+
 ## Testable now, no hardware needed
 
 Fully testable via Docker on any dev machine — this doesn't require the Mac Mini at all except for the final always-on deployment.

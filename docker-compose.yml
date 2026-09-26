@@ -11,6 +11,8 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       ANYLIST_SESSION_IDLE_MINUTES: ${ANYLIST_SESSION_IDLE_MINUTES:-30}
+      # client_id -> scope profile JSON (src/tools/scopes.js); unmapped clients get everything
+      ANYLIST_CLIENT_SCOPES: ${ANYLIST_CLIENT_SCOPES:-}
       ALLOWED_EMAILS_FILE: /config/allowed-emails.txt
       NODE_ENV: production
     volumes:

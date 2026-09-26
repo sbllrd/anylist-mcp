@@ -17,6 +17,7 @@ import { getOrCreateSession } from "./session-manager.js";
 import oauthRouter, { requireBearerToken } from "./auth/oauth.js";
 import onboardingRouter from "./onboarding.js";
 import { registerAllTools } from "../tools/index.js";
+import { parseClientScopes, profileForClient, scopeServer } from "../tools/scopes.js";
 import { isGoogleEnabled } from "./auth/providers/google.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -140,12 +141,24 @@ app.use(onboardingRouter);
 // session, keyed by the Mcp-Session-Id header. This is required for elicitation
 // to work (the server needs to maintain request context across the session).
 
-const mcpSessions = new Map(); // sessionId → { server, transport }
+const mcpSessions = new Map(); // sessionId → { server, transport, clientId }
 
-function createMcpServer(userId) {
+// client_id -> scope profile (see src/tools/scopes.js). Parsed once at
+// startup so a typo'd profile name fails the boot, not a request.
+const clientScopes = parseClientScopes(process.env.ANYLIST_CLIENT_SCOPES);
+
+function createMcpServer(userId, clientId) {
   const mcpServer = new McpServer({ name: "anylist-mcp-server", version: "1.8.0" });
-  registerAllTools(mcpServer, () => getOrCreateSession(userId));
+  const getClient = () => getOrCreateSession(userId);
+  const profile = profileForClient(clientScopes, clientId);
+  registerAllTools(scopeServer(mcpServer, profile, getClient), getClient);
   return mcpServer;
+}
+
+// A session is bound to the OAuth client that initialized it, so a scoped
+// client can't reuse a full client's session (or the reverse).
+function sessionBelongsTo(mcpSession, req) {
+  return mcpSession.clientId === req.clientId;
 }
 
 // MCP endpoint — available at both / and /mcp.
@@ -159,6 +172,10 @@ async function handleMcp(req, res) {
       ? mcpSessions.get(sessionId)
       : null;
 
+    if (mcpSession && !sessionBelongsTo(mcpSession, req)) {
+      return res.status(403).json({ error: "Session belongs to a different client." });
+    }
+
     if (!mcpSession) {
       if (!isInitializeRequest(req.body)) {
         return res.status(404).json({ error: "Session not found. Send an initialize request first." });
@@ -166,12 +183,13 @@ async function handleMcp(req, res) {
 
       // Create a new MCP session for this user
       const userId = req.userId;
-      const mcpServer = createMcpServer(userId);
+      const clientId = req.clientId;
+      const mcpServer = createMcpServer(userId, clientId);
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomBytes(16).toString("hex"),
         onsessioninitialized: (sid) => {
-          mcpSessions.set(sid, { server: mcpServer, transport });
+          mcpSessions.set(sid, { server: mcpServer, transport, clientId });
         },
       });
 
@@ -204,8 +222,8 @@ function makeSseConnectHandler(postEndpoint) {
     try {
       const transport = new SSEServerTransport(postEndpoint, res);
       const sessionId = transport.sessionId;
-      const mcpServer = createMcpServer(req.userId);
-      mcpSessions.set(sessionId, { server: mcpServer, transport });
+      const mcpServer = createMcpServer(req.userId, req.clientId);
+      mcpSessions.set(sessionId, { server: mcpServer, transport, clientId: req.clientId });
       transport.onclose = () => { mcpSessions.delete(sessionId); };
       await mcpServer.connect(transport); // connect() calls transport.start() internally
     } catch (err) {
@@ -220,6 +238,9 @@ async function handleSseMessage(req, res) {
     const mcpSession = req.query.sessionId ? mcpSessions.get(req.query.sessionId) : null;
     if (!mcpSession || !(mcpSession.transport instanceof SSEServerTransport)) {
       return res.status(404).json({ error: "SSE session not found." });
+    }
+    if (!sessionBelongsTo(mcpSession, req)) {
+      return res.status(403).json({ error: "Session belongs to a different client." });
     }
     await mcpSession.transport.handlePostMessage(req, res, req.body);
   } catch (err) {

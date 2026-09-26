@@ -573,7 +573,11 @@ class AnyListClient {
     }
   }
 
-  async importRecipeFromUrl(url) {
+  /**
+   * strict (samwise fork, used by scoped clients): AnyList's native importer
+   * only, no heuristic fallback, and refuse a recipe whose name already exists.
+   */
+  async importRecipeFromUrl(url, { strict = false } = {}) {
     if (!this.client) {
       throw new Error('Not connected. Call connect() first.');
     }
@@ -586,6 +590,11 @@ class AnyListClient {
 
       if (decoded.statusCode === 0 && decoded.recipe) {
         // Native import succeeded
+        if (strict) {
+          const existing = await this.getRecipes(decoded.recipe.name);
+          const match = existing.find(r => r.name.toLowerCase() === (decoded.recipe.name || '').toLowerCase());
+          if (match) throw new Error(`Recipe "${match.name}" already exists`);
+        }
         const recipe = await this.client.createRecipe({
           name: decoded.recipe.name,
           note: decoded.recipe.note || null,
@@ -619,6 +628,10 @@ class AnyListClient {
       nativeError = decoded.siteSpecificHelpText || 'Native import returned no recipe';
     } catch (error) {
       nativeError = error.message;
+    }
+
+    if (strict) {
+      throw new Error(`Not imported: AnyList's importer found no recipe (${nativeError})`);
     }
 
     // Fallback: use normalizer

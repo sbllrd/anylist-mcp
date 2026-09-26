@@ -390,7 +390,7 @@ function issueCodeAndRedirect(req, res, userId, oauth) {
 
 /**
  * Express middleware that validates Bearer tokens on the /mcp endpoint.
- * Sets req.userId on success; sends 401 on failure.
+ * Sets req.userId and req.clientId on success; sends 401 on failure.
  */
 export function requireBearerToken(req, res, next) {
   const auth = req.headers["authorization"] || "";
@@ -412,6 +412,7 @@ export function requireBearerToken(req, res, next) {
     return res.status(401).json({ error: "invalid_token" });
   }
   req.userId = record.user_id;
+  req.clientId = record.client_id;
   next();
 }
 
