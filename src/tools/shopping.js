@@ -219,7 +219,21 @@ export function register(server, getClient) {
           const { matchId, categoryAssignment, message: categoryError } = await resolveCategoryMatchId(client, params.category);
           if (categoryError) return errorResponse(categoryError);
 
+          // Retry safety (2026-10-03): an item already active on the list with
+          // nothing new requested is left alone and reported as such, so a retry
+          // after a timeout is a no-op and a bare "add milk" can't reset the
+          // quantity someone already set. The model reads the outcome.
+          const existing = client.targetList.getItemByName?.(itemName);
+          if (existing && !existing.checked && quantity === undefined && notes === undefined && !params.store_name) {
+            return textResponse(`already_on_list: "${existing.name}" is already on list "${client.targetList.name}" (quantity ${existing.quantity ?? 1}); nothing changed`);
+          }
           await client.addItem(itemName, quantity || 1, notes || null, matchId, params.store_name || null, categoryAssignment || null);
+          if (existing && existing.checked) {
+            return textResponse(`Successfully added "${itemName}" to list "${client.targetList.name}" (it was checked off, so it was put back on the list)`);
+          }
+          if (existing) {
+            return textResponse(`Successfully updated "${itemName}" on list "${client.targetList.name}" (it was already on the list)`);
+          }
           return textResponse(`Successfully added "${itemName}" to list "${client.targetList.name}"`);
         }
         case "add_items": {
@@ -227,10 +241,16 @@ export function register(server, getClient) {
           if (!entries || entries.length === 0) throw new Error(`Action "add_items" requires a non-empty "items" array`);
           await client.connect(list_name);
           const added = [];
+          const already = [];
           const failed = [];
           for (const entry of entries) {
             const item = typeof entry === "string" ? { name: entry } : entry;
             try {
+              const existing = client.targetList.getItemByName?.(item.name);
+              if (existing && !existing.checked && item.quantity === undefined && item.notes === undefined && !item.store_name) {
+                already.push(existing.name);  // same retry rule as add_item
+                continue;
+              }
               const { matchId, categoryAssignment, message: categoryError } = await resolveCategoryMatchId(client, item.category);
               if (categoryError) throw new Error(categoryError);
               const { valid, message } = await validateStoreName(client, item.store_name);
@@ -243,6 +263,7 @@ export function register(server, getClient) {
           }
           const summary = [`Added ${added.length} of ${entries.length} items to list "${client.targetList.name}":`];
           added.forEach(n => summary.push(`  ✓ ${n}`));
+          already.forEach(n => summary.push(`  = ${n} (already_on_list, nothing changed)`));
           failed.forEach(f => summary.push(`  ✗ ${f}`));
           return failed.length > 0 ? errorResponse(summary.join("\n")) : textResponse(summary.join("\n"));
         }

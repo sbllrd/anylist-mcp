@@ -61,6 +61,38 @@ describe('shopping tool', () => {
     });
   });
 
+  describe('retry safety', () => {
+    it('reports an item already active on the list and changes nothing', async () => {
+      await handlers.shopping({ action: 'add_item', name: 'Milk', quantity: 2 });
+      const retry = await handlers.shopping({ action: 'add_item', name: 'milk' });
+      assert.ok(retry.content[0].text.startsWith('already_on_list:'));
+      assert.equal(client._items.length, 1);
+      assert.equal(client._items[0].quantity, 2);  // a bare retry can't reset the quantity
+    });
+
+    it('still updates when a quantity or note is given', async () => {
+      await handlers.shopping({ action: 'add_item', name: 'Eggs' });
+      const result = await handlers.shopping({ action: 'add_item', name: 'Eggs', quantity: 12 });
+      assert.ok(result.content[0].text.includes('Successfully updated "Eggs"'));
+    });
+
+    it('puts a checked-off item back and says so', async () => {
+      await handlers.shopping({ action: 'add_item', name: 'Bread' });
+      client._items[0].checked = true;
+      const result = await handlers.shopping({ action: 'add_item', name: 'Bread' });
+      assert.ok(result.content[0].text.includes('was checked off'));
+    });
+
+    it('add_items skips what is already active and lists it', async () => {
+      await handlers.shopping({ action: 'add_item', name: 'Milk' });
+      const result = await handlers.shopping({ action: 'add_items', items: ['Milk', 'Eggs'] });
+      const text = result.content[0].text;
+      assert.ok(text.includes('Added 1 of 2 items'));
+      assert.ok(text.includes('= Milk (already_on_list'));
+      assert.equal(client._items.filter(i => i.name === 'Milk').length, 1);
+    });
+  });
+
   describe('add_items', () => {
     it('adds multiple items from plain names', async () => {
       const result = await handlers.shopping({ action: 'add_items', items: ['Milk', 'Eggs', 'Bread'] });

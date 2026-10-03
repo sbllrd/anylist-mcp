@@ -55,6 +55,15 @@ export function register(server, getClient) {
         case "create_event": {
           let eventDate = date;
           if (!eventDate) eventDate = await elicitRequiredField("date", "What date for the meal plan event? (YYYY-MM-DD)");
+          // Retry safety (2026-10-03): the same title or recipe on the same date is
+          // the earlier call having landed (e.g. a timed-out retry), not a second meal.
+          const sameDay = (await client.getMealPlanEvents()).filter(e => e.date === eventDate);
+          const duplicate = sameDay.find(e =>
+            (title && e.title && e.title.toLowerCase() === title.toLowerCase()) ||
+            (recipe_id && e.recipeId === recipe_id));
+          if (duplicate) {
+            return textResponse(`already_exists: meal plan already has ${duplicate.title || duplicate.recipeName || "that meal"} on ${eventDate} (id: ${duplicate.identifier}); nothing added`);
+          }
           const result = await client.createMealPlanEvent({
             date: eventDate,
             title: title || null,

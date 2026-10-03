@@ -104,6 +104,29 @@ describe('meal_plan tool', () => {
     });
   });
 
+  describe('create_event retry safety', () => {
+    it('does not create the same title twice on one date', async () => {
+      await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Tacos' });
+      const retry = await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'tacos' });
+      assert.ok(retry.content[0].text.startsWith('already_exists:'));
+      assert.equal(client._events.length, 1);
+    });
+
+    it('does not create the same recipe twice on one date', async () => {
+      client._events.push({ identifier: 'e1', date: '2025-03-01', title: null, recipeId: 'r1' });
+      const retry = await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', recipe_id: 'r1' });
+      assert.ok(retry.content[0].text.startsWith('already_exists:'));
+      assert.equal(client._events.length, 1);
+    });
+
+    it('allows a different meal, or the same meal on another date', async () => {
+      await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Tacos' });
+      await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Soup' });
+      await handlers.meal_plan({ action: 'create_event', date: '2025-03-02', title: 'Tacos' });
+      assert.equal(client._events.length, 3);
+    });
+  });
+
   describe('delete_event', () => {
     it('deletes an existing event', async () => {
       client._events.push({ identifier: 'e1', date: '2025-03-01' });

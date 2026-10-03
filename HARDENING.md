@@ -154,3 +154,13 @@ Bug report (2026-09-22, from "To Do Before Jamaica", 36 items): `list_items` gro
 ## Logging integration: none, deliberately
 
 Don't add a `services/logging` dependency or `log_execution()` calls into this vendored source. `execution_logs` rows for every call to this server are the orchestrator's job (it's the MCP client making the calls) — adding logging here would mean maintaining a diff from upstream for something the orchestrator already covers, which cuts against the whole point of the single-directory vendoring pattern (hardening commits only, kept minimal and rebasable). See `orchestrator/README.md`'s Logging integration section.
+
+## Retry safety for adds (2026-10-03)
+
+A write that times out may have landed, and the model retries. Shopping adds were already idempotent by name (an existing item is updated, not duplicated), but a bare retry reset an existing item's quantity to 1, and the reply said "Successfully added" even when nothing changed. Meal-plan `create_event` had no guard, so a retry made a second event. Now (`src/tools/shopping.js`, `src/tools/meal-plan.js`):
+
+- `shopping` `add_item` / `add_items`: an item already active on the list, with no quantity, note or store given, is left alone and reported as `already_on_list` (add_items lists it with `=`). A checked-off item is put back and the reply says so; an explicit quantity or note on an existing item updates it and says "updated".
+- `meal_plan` `create_event`: the same title (case-insensitive) or the same recipe on the same date returns `already_exists` with the existing event's id instead of creating another. A different meal, or the same meal on another date, is created as before.
+- Recipes' `create` already refused an exact-name duplicate (it asks before overwriting), so it needed nothing.
+
+The model-facing guidance is in `orchestrator/agent-workspace/primary/TOOLS.md` ("When a write times out or fails") and the shared bot's TOOLS.md. Tests: `test/tools/shopping.test.js` ("retry safety") and `test/tools/meal-plan.test.js`.
