@@ -249,6 +249,10 @@ export function consumeOAuthCode(code) {
 
 export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, scope, accessTtlSeconds }) {
   const now = Math.floor(Date.now() / 1000);
+  const accessTtl = accessTtlSeconds || 3600;   // access token: 1 hour by default
+  // The row is purged once the refresh token expires, so it must never be
+  // shorter than the access token (a 180-day M2M token was deleted at day 30).
+  const refreshTtl = Math.max(86400 * 30, accessTtl);
   getDb().prepare(`
     INSERT INTO oauth_tokens
       (access_token, refresh_token, user_id, client_id, scope, expires_at, refresh_expires_at)
@@ -259,8 +263,8 @@ export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, s
     userId,
     clientId,
     scope || null,
-    now + (accessTtlSeconds || 3600),   // access token: 1 hour by default
-    now + 86400 * 30                    // refresh token: 30 days
+    now + accessTtl,
+    now + refreshTtl                    // refresh token: 30 days, or the access TTL if longer
   );
 }
 
