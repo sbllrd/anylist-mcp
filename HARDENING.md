@@ -155,6 +155,8 @@ Bug report (2026-09-22, from "To Do Before Jamaica", 36 items): `list_items` gro
 
 Don't add a `services/logging` dependency or `log_execution()` calls into this vendored source. `execution_logs` rows for every call to this server are the orchestrator's job (it's the MCP client making the calls) — adding logging here would mean maintaining a diff from upstream for something the orchestrator already covers, which cuts against the whole point of the single-directory vendoring pattern (hardening commits only, kept minimal and rebasable). See `orchestrator/README.md`'s Logging integration section.
 
+The request log line in `src/http/index.js` is the one local diff here (2026-11-06, principle 9): upstream logged the first 200 characters of each `/mcp` body, which put list, item and recipe arguments in `docker logs`. It now logs the JSON-RPC method and tool name only.
+
 ## Retry safety for adds (2026-10-03)
 
 A write that times out may have landed, and the model retries. Shopping adds were already idempotent by name (an existing item is updated, not duplicated), but a bare retry reset an existing item's quantity to 1, and the reply said "Successfully added" even when nothing changed. Meal-plan `create_event` had no guard, so a retry made a second event. Now (`src/tools/shopping.js`, `src/tools/meal-plan.js`):

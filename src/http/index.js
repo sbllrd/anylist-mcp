@@ -72,8 +72,12 @@ app.use(session({
 app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
-    const body = req.method === "POST" && (req.path === "/sse" || req.path === "/mcp") && req.body
-      ? " body:" + JSON.stringify(req.body).slice(0, 200)
+    // Structure only: the JSON-RPC method and tool name, never the arguments
+    // (list, item and recipe content must not reach the log).
+    const rpcMethod = req.body?.method;
+    const rpcName = req.body?.params?.name;
+    const body = req.method === "POST" && (req.path === "/sse" || req.path === "/mcp") && rpcMethod
+      ? " rpc:" + JSON.stringify(rpcName ? `${rpcMethod} ${rpcName}` : rpcMethod).slice(0, 100)
       : "";
     console.log(`${req.method} ${req.path} → ${res.statusCode} (${Date.now() - start}ms) session:${req.session?.id?.slice(0, 8) ?? "none"} user:${req.session?.userId ?? "-"}${body}`);
   });
