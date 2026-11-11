@@ -46,14 +46,30 @@ export async function getOrCreateSession(userId) {
 export function evictSession(userId) {
   const session = sessions.get(userId);
   if (session) {
-    clearTimeout(session.timer);
     sessions.delete(userId);
+    endSession(session);
+  }
+}
+
+/**
+ * Stop a session's timer and disconnect its client. Dropping the map entry
+ * alone leaves the client's AnyList websocket open, and every leaked client
+ * refetches all lists on each list change, which bursts into 429s.
+ * Never throws: a failed disconnect is logged.
+ */
+export async function endSession(session) {
+  clearTimeout(session.timer);
+  try {
+    await session.client.disconnect();
+  } catch (error) {
+    console.error(`AnyList session teardown failed: ${error.message}`);
   }
 }
 
 function resetIdleTimer(userId, session) {
   clearTimeout(session.timer);
   session.timer = setTimeout(() => {
-    sessions.delete(userId);
+    if (sessions.get(userId) === session) sessions.delete(userId);
+    endSession(session);
   }, IDLE_TIMEOUT_MS);
 }
