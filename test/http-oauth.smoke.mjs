@@ -149,7 +149,16 @@ try {
       grant_type: "authorization_code", code: loc.searchParams.get("code"), redirect_uri: CALLBACK, code_verifier: verifier, client_id: clientId,
     } });
     assert.equal(res.status, 200);
-    assert.ok((await res.json()).access_token);
+    const body = await res.json();
+    assert.ok(body.access_token);
+    // Stored hashed: the raw tokens aren't in the table, yet they still look up.
+    const raw = db.getDb().prepare("SELECT count(*) n FROM oauth_tokens WHERE access_token = ? OR refresh_token = ?").get(body.access_token, body.refresh_token);
+    assert.equal(raw.n, 0);
+    assert.ok(db.getTokenRecord(body.access_token));
+    assert.ok(db.getTokenByRefresh(body.refresh_token));
+    const mcp = await req("POST", "/mcp", { headers: { authorization: `Bearer ${body.access_token}`, accept: "application/json, text/event-stream" },
+      json: { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "0" } } } });
+    assert.equal(mcp.status, 200);
   });
 
   await check("the session cookie is SameSite=Lax", async () => {

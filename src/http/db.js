@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "crypto";
 import { readFileSync, existsSync } from "fs";
 import path from "path";
 
@@ -100,6 +100,28 @@ function migrate(db) {
       created_at     INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  // v1: access tokens, refresh tokens and auth codes are stored as SHA-256
+  // hashes, so a copy of the database (a backup, say) holds nothing that
+  // works as a bearer token. Rows from before v1 hold the raw values; hash
+  // them once, in place, so existing clients keep working.
+  if (db.pragma("user_version", { simple: true }) < 1) {
+    db.transaction(() => {
+      const tokens = db.prepare("SELECT access_token, refresh_token FROM oauth_tokens").all();
+      const updTok = db.prepare("UPDATE oauth_tokens SET access_token = ?, refresh_token = ? WHERE access_token = ?");
+      for (const t of tokens) updTok.run(hashSecret(t.access_token), hashSecret(t.refresh_token), t.access_token);
+      const codes = db.prepare("SELECT code FROM oauth_codes").all();
+      const updCode = db.prepare("UPDATE oauth_codes SET code = ? WHERE code = ?");
+      for (const c of codes) updCode.run(hashSecret(c.code), c.code);
+      db.pragma("user_version = 1");
+    })();
+  }
+}
+
+// Tokens and codes are 32 random bytes, so a plain SHA-256 is enough: there is
+// nothing to brute-force, and the lookup stays an indexed equality match.
+export function hashSecret(value) {
+  return createHash("sha256").update(String(value)).digest("hex");
 }
 
 // ── Encryption helpers ────────────────────────────────────────────────────────
@@ -234,13 +256,14 @@ export function saveOAuthCode({ code, clientId, userId, redirectUri, codeChallen
     INSERT INTO oauth_codes
       (code, client_id, user_id, redirect_uri, code_challenge, challenge_method, scope, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(code, clientId, userId, redirectUri, codeChallenge, challengeMethod || "S256", scope || null, expiresAt);
+  `).run(hashSecret(code), clientId, userId, redirectUri, codeChallenge, challengeMethod || "S256", scope || null, expiresAt);
 }
 
 export function consumeOAuthCode(code) {
-  const row = getDb().prepare("SELECT * FROM oauth_codes WHERE code = ?").get(code);
+  const hashed = hashSecret(code);
+  const row = getDb().prepare("SELECT * FROM oauth_codes WHERE code = ?").get(hashed);
   if (!row) return null;
-  getDb().prepare("DELETE FROM oauth_codes WHERE code = ?").run(code);
+  getDb().prepare("DELETE FROM oauth_codes WHERE code = ?").run(hashed);
   if (row.expires_at < Math.floor(Date.now() / 1000)) return null;
   return row;
 }
@@ -258,8 +281,8 @@ export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, s
       (access_token, refresh_token, user_id, client_id, scope, expires_at, refresh_expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
-    accessToken,
-    refreshToken,
+    hashSecret(accessToken),
+    hashSecret(refreshToken),
     userId,
     clientId,
     scope || null,
@@ -269,15 +292,15 @@ export function saveOAuthTokens({ accessToken, refreshToken, userId, clientId, s
 }
 
 export function getTokenRecord(accessToken) {
-  return getDb().prepare("SELECT * FROM oauth_tokens WHERE access_token = ?").get(accessToken);
+  return getDb().prepare("SELECT * FROM oauth_tokens WHERE access_token = ?").get(hashSecret(accessToken));
 }
 
 export function getTokenByRefresh(refreshToken) {
-  return getDb().prepare("SELECT * FROM oauth_tokens WHERE refresh_token = ?").get(refreshToken);
+  return getDb().prepare("SELECT * FROM oauth_tokens WHERE refresh_token = ?").get(hashSecret(refreshToken));
 }
 
 export function deleteTokensByRefresh(refreshToken) {
-  getDb().prepare("DELETE FROM oauth_tokens WHERE refresh_token = ?").run(refreshToken);
+  getDb().prepare("DELETE FROM oauth_tokens WHERE refresh_token = ?").run(hashSecret(refreshToken));
 }
 
 export function deleteExpiredTokens() {
