@@ -63,6 +63,9 @@ app.use(session({
     // secure=true only when the request actually arrived over HTTPS (via proxy).
     // When testing locally over plain HTTP this will be false, allowing cookies to work.
     secure: "auto",
+    // Lax: sent on the top-level GET from the client to /oauth/authorize, not
+    // on a cross-site POST, so another site can't auto-submit the consent form.
+    sameSite: "lax",
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   },
 }));
@@ -81,6 +84,34 @@ app.use((req, res, next) => {
       : "";
     console.log(`${req.method} ${req.path} → ${res.statusCode} (${Date.now() - start}ms) session:${req.session?.id?.slice(0, 8) ?? "none"} user:${req.session?.userId ?? "-"}${body}`);
   });
+  next();
+});
+
+function escapeHtml(value) {
+  return value.replace(/[&<>"'`]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" })[c]);
+}
+
+// Security headers on every response (audit S-07). Scripts need this
+// response's nonce; Google sign-in is the only outside script and frame.
+// No form-action: the consent form's redirect back to the client
+// (claude.ai) would be blocked by it in Chromium.
+app.use((req, res, next) => {
+  const nonce = randomBytes(16).toString("base64");
+  res.locals.cspNonce = nonce;
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' https://accounts.google.com/gsi/client`,
+    "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
+    "frame-src https://accounts.google.com/gsi/",
+    "connect-src 'self' https://accounts.google.com/gsi/",
+    "img-src 'self' data:",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+  ].join("; "));
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
   next();
 });
 
@@ -104,13 +135,16 @@ app.engine("html", (filePath, options, callback) => {
           content = content.replaceAll(startTag, "").replaceAll(endTag, "");
         }
       }
-      // Value replacement: {{key}}
+      // Value replacement: {{key}}, always HTML-escaped (audit S-07: the
+      // consent page echoed client_id from the query string unescaped).
       if (typeof v === "string" || typeof v === "number") {
-        content = content.replaceAll(`{{${k}}}`, String(v));
+        content = content.replaceAll(`{{${k}}}`, escapeHtml(String(v)));
       } else if (v === null || v === undefined) {
         content = content.replaceAll(`{{${k}}}`, "");
       }
     }
+    // Inline scripts run only with this response's CSP nonce.
+    if (options.cspNonce) content = content.replaceAll("<script", `<script nonce="${options.cspNonce}"`);
     callback(null, content);
   } catch (err) {
     callback(err);

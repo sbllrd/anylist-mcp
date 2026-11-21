@@ -41,8 +41,8 @@
     <!-- endif:error -->
 
     <div class="tabs">
-      <div class="tab active" onclick="switchTab('signin')">Sign In</div>
-      <div class="tab" onclick="switchTab('register')">Register</div>
+      <div class="tab active" data-tab="signin">Sign In</div>
+      <div class="tab" data-tab="register">Register</div>
     </div>
 
     <div id="tab-signin" class="tab-panel active">
@@ -103,6 +103,10 @@
         panels[i].classList.toggle("active", active);
       });
     }
+    // Wired here, not with onclick attributes, so the page works under the CSP.
+    document.querySelectorAll(".tab[data-tab]").forEach((tab) => {
+      tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+    });
   </script>
 </body>
 </html>

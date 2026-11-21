@@ -34,6 +34,49 @@ function renderLogin(res, error = "") {
 
 const router = Router();
 
+// ── Redirect URIs (audit S-06) ────────────────────────────────────────────────
+// A client may only send codes back to a redirect URI it registered, and
+// registration only accepts HTTPS callbacks on these hosts (plus loopback, for
+// local desktop clients, RFC 8252). Override with ANYLIST_REDIRECT_HOSTS.
+const REDIRECT_HOSTS = (process.env.ANYLIST_REDIRECT_HOSTS || "claude.ai,claude.com")
+  .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+
+export function isAllowedRedirectUri(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.username || u.password || u.hash) return false;
+  if (u.protocol === "http:") return ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  return u.protocol === "https:" && REDIRECT_HOSTS.includes(u.hostname.toLowerCase());
+}
+
+// ── Rate limiting (audit S-08) ────────────────────────────────────────────────
+// Fixed window per client IP, in memory. req.ip is the visitor's address
+// ("trust proxy" is 1: cloudflared's X-Forwarded-For). Cloudflare Access and
+// WAF rules in front are the main control; this backstops them.
+export function rateLimit({ windowMs, max, name }) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip || "unknown";
+    let entry = hits.get(key);
+    if (!entry || entry.reset <= now) {
+      entry = { count: 0, reset: now + windowMs };
+      hits.set(key, entry);
+      if (hits.size > 10000) for (const [k, e] of hits) if (e.reset <= now) hits.delete(k);
+    }
+    entry.count += 1;
+    if (entry.count > max) {
+      console.log(`[ratelimit] ${name} limited ip=${key}`);
+      res.setHeader("Retry-After", String(Math.ceil((entry.reset - now) / 1000)));
+      return res.status(429).send("Too many requests. Try again later.");
+    }
+    next();
+  };
+}
+const loginLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, name: "login" });
+const registerLimit = rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: "client-registration" });
+const tokenLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, name: "token" });
+
 // BASE_URL is optional: if not set, derive from the incoming request so the
 // server works behind any proxy (including a Cloudflare quick tunnel) without
 // needing to know its public URL at startup.
@@ -75,10 +118,14 @@ router.get(["/.well-known/oauth-protected-resource", "/.well-known/oauth-protect
 
 // ── Dynamic Client Registration (RFC 7591) ────────────────────────────────────
 // Home ASsistent expects /register, but Claude expects /oauth/register, so we support both.
-router.post(["/oauth/register", "/register"], (req, res) => {
+router.post(["/oauth/register", "/register"], registerLimit, (req, res) => {
   const { redirect_uris, client_name } = req.body || {};
   const clientId = randomUUID();
   const redirectUri = Array.isArray(redirect_uris) ? redirect_uris[0] : redirect_uris || null;
+  if (!redirectUri || !isAllowedRedirectUri(redirectUri)) {
+    console.log(`[oauth] ANOMALOUS registration refused: redirect not allowed ip=${req.ip}`);
+    return res.status(400).json({ error: "invalid_redirect_uri" });
+  }
   registerOAuthClient({ clientId, redirectUri });
   res.status(201).json({
     client_id: clientId,
@@ -101,15 +148,30 @@ router.get(["/oauth/authorize", "/authorize"], (req, res) => {
     return res.status(400).send("Missing required parameter: client_id");
   }
 
-  // Confidential clients (those with a client_secret) don't use PKCE
+  // Only registered browser clients, and only to the redirect URI they
+  // registered (audit S-06). Errors are shown here, never redirected to an
+  // unverified URI. Confidential (machine) clients use client_credentials.
   const clientRecord = getOAuthClientWithSecret(client_id);
-  const isConfidential = !!(clientRecord && clientRecord.client_secret_hash);
-  if (!isConfidential && !code_challenge) {
+  if (!clientRecord || clientRecord.client_secret_hash || !clientRecord.redirect_uri) {
+    console.log(`[oauth] ANOMALOUS authorize for unknown or non-browser client ip=${req.ip}`);
+    return res.status(400).send("Unknown client");
+  }
+  if (redirect_uri && redirect_uri !== clientRecord.redirect_uri) {
+    console.log(`[oauth] ANOMALOUS authorize redirect mismatch client=${client_id.slice(0, 8)} ip=${req.ip}`);
+    return res.status(400).send("redirect_uri does not match the registered one");
+  }
+  if (!code_challenge) {
     return res.status(400).send("Missing required parameter: code_challenge");
+  }
+  if (code_challenge_method && code_challenge_method !== "S256") {
+    return res.status(400).send("Only S256 PKCE is supported");
   }
 
   // Store OAuth params in session
-  req.session.oauthParams = { client_id, redirect_uri, state, code_challenge, code_challenge_method, scope };
+  req.session.oauthParams = {
+    client_id, redirect_uri: clientRecord.redirect_uri, state, code_challenge,
+    code_challenge_method: "S256", scope,
+  };
 
   // If the user already has an active session, skip the login step
   if (req.session.userId) {
@@ -122,7 +184,7 @@ router.get(["/oauth/authorize", "/authorize"], (req, res) => {
 
 // ── Token Endpoint ────────────────────────────────────────────────────────────
 
-router.post(["/oauth/token", "/token"], async (req, res) => {
+router.post(["/oauth/token", "/token"], tokenLimit, async (req, res) => {
   const body = req.body || {};
   const { grant_type, client_id } = body;
   const bodyKeys = Object.keys(body);
@@ -151,6 +213,11 @@ async function handleAuthCodeGrant(req, res) {
   const codeRow = consumeOAuthCode(code);
   if (!codeRow) {
     return res.status(400).json({ error: "invalid_grant", error_description: "Code invalid or expired" });
+  }
+  // The code must go back to the client and redirect it was issued for.
+  if ((client_id && client_id !== codeRow.client_id) || (redirect_uri && redirect_uri !== codeRow.redirect_uri)) {
+    console.log(`[oauth] ANOMALOUS code exchange with mismatched client or redirect ip=${req.ip}`);
+    return res.status(400).json({ error: "invalid_grant", error_description: "Code was issued to a different client or redirect" });
   }
 
   if (code_verifier) {
@@ -269,7 +336,7 @@ async function handleClientCredentialsGrant(req, res) {
 
 // ── Login / Registration form handlers ───────────────────────────────────────
 
-router.post("/auth/login", async (req, res) => {
+router.post("/auth/login", loginLimit, async (req, res) => {
   const { email, password } = req.body || {};
   console.log(`[auth] login attempt: ${email}`);
   if (!email || !password) {
@@ -285,7 +352,7 @@ router.post("/auth/login", async (req, res) => {
   }
 });
 
-router.post("/auth/register", async (req, res) => {
+router.post("/auth/register", loginLimit, async (req, res) => {
   const { email, password } = req.body || {};
   console.log(`[auth] register attempt: ${email}`);
   if (!email || !password) {
@@ -301,7 +368,7 @@ router.post("/auth/register", async (req, res) => {
   }
 });
 
-router.post("/auth/google", async (req, res) => {
+router.post("/auth/google", loginLimit, async (req, res) => {
   const { credential } = req.body || {};
   try {
     const user = await loginWithGoogle(credential);
@@ -331,7 +398,9 @@ function completeAuth(req, res, user) {
     return res.redirect("/setup");
   }
 
-  return issueCodeAndRedirect(req, res, user.id, oauth);
+  // Always ask: a login triggered by someone else's crafted link must not
+  // hand them a code without Sam seeing where it goes (audit S-06).
+  return res.redirect("/oauth/consent");
 }
 
 /**
@@ -342,9 +411,12 @@ router.get("/oauth/consent", (req, res) => {
     return res.redirect("/login");
   }
   // Render consent view
+  let redirectHost = "";
+  try { redirectHost = new URL(req.session.oauthParams.redirect_uri).host; } catch { /* shown blank */ }
   res.render("consent", {
     clientId: req.session.oauthParams.client_id,
     scope: req.session.oauthParams.scope || "mcp",
+    redirectHost,
   });
 });
 

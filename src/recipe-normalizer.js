@@ -1,5 +1,7 @@
 import https from 'node:https';
 import http from 'node:http';
+import net from 'node:net';
+import dns from 'node:dns/promises';
 
 /**
  * Normalize a recipe from various input types into AnyList-compatible format.
@@ -24,30 +26,86 @@ export async function normalizeRecipe(input) {
 
 // ===== URL Parsing =====
 
-async function fetchHtml(url) {
+// Outbound fetches go to the public internet only (audit S-16): a token
+// holder must not be able to make this container read the LAN, the Docker
+// host or a cloud metadata address. The hostname is resolved first, every
+// address is checked, and the connection is pinned to the checked address so
+// a second DNS answer can't swap in a private one. Redirects are re-checked.
+const BLOCKED = new net.BlockList();
+for (const [addr, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3],
+]) BLOCKED.addSubnet(addr, prefix, 'ipv4');
+for (const [addr, prefix] of [['::', 127], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8], ['64:ff9b::', 96]]) {
+  BLOCKED.addSubnet(addr, prefix, 'ipv6');
+}
+const MAX_REDIRECTS = 5;
+const MAX_BYTES = 5 * 1024 * 1024;
+
+export function isPublicAddress(address) {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  if (mapped) address = mapped[1];
+  const family = net.isIP(address);
+  if (!family) return false;
+  return !BLOCKED.check(address, family === 4 ? 'ipv4' : 'ipv6');
+}
+
+async function resolvePublic(hostname) {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  const addresses = net.isIP(host) ? [{ address: host, family: net.isIP(host) }] : await dns.lookup(host, { all: true });
+  if (!addresses.length || !addresses.every((a) => isPublicAddress(a.address))) {
+    throw new Error('Refusing to fetch a private or local address');
+  }
+  return addresses[0];
+}
+
+async function fetchHtml(url, redirects = 0) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error(`Unsupported URL scheme: ${parsed.protocol}`);
+  }
+  const target = await resolvePublic(parsed.hostname);
   return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? https : http;
-    const req = client.get(url, {
+    const client = parsed.protocol === 'https:' ? https : http;
+    const req = client.get(parsed, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
       },
       timeout: 15000,
+      // Connect to the address checked above, never a fresh lookup.
+      lookup: (_host, options, cb) => (options && options.all
+        ? cb(null, [{ address: target.address, family: target.family }])
+        : cb(null, target.address, target.family)),
     }, (res) => {
-      // Follow redirects
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        if (redirects >= MAX_REDIRECTS) {
+          reject(new Error('Too many redirects'));
+          return;
+        }
         const redirectUrl = new URL(res.headers.location, url).href;
-        fetchHtml(redirectUrl).then(resolve).catch(reject);
+        fetchHtml(redirectUrl, redirects + 1).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
+        res.resume();
         reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
         return;
       }
       let data = '';
+      let bytes = 0;
       res.setEncoding('utf8');
-      res.on('data', chunk => data += chunk);
+      res.on('data', (chunk) => {
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > MAX_BYTES) {
+          req.destroy();
+          reject(new Error('Page too large'));
+          return;
+        }
+        data += chunk;
+      });
       res.on('end', () => resolve(data));
       res.on('error', reject);
     });
