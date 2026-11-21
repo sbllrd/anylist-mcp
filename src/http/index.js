@@ -170,6 +170,20 @@ app.get("/health", (req, res) => {
 // ── OAuth + onboarding routes ─────────────────────────────────────────────────
 
 app.use(oauthRouter);
+// Under /mcp only the machine endpoints (discovery, registration, token) are
+// served. The browser pages live at the root, where Cloudflare Access
+// requires an email code first; serving them here too bypassed Access
+// (POST /mcp/auth/login reached the password check). Authorize redirects to
+// the root copy; login and consent aren't served here at all.
+app.use("/mcp", (req, res, next) => {
+  const p = req.path.toLowerCase().replace(/\/+$/, "");
+  if (p === "/oauth/authorize" || p === "/authorize") {
+    const query = req.originalUrl.includes("?") ? req.originalUrl.slice(req.originalUrl.indexOf("?")) : "";
+    return res.redirect(302, "/oauth/authorize" + query);
+  }
+  if (p.startsWith("/auth/") || p === "/oauth/consent") return res.status(404).send("Not found");
+  next();
+});
 app.use("/mcp", oauthRouter);
 app.use(onboardingRouter);
 

@@ -158,6 +158,16 @@ try {
     assert.match(res.headers.get("set-cookie") || "", /SameSite=Lax/i);
   });
 
+  await check("the browser routes aren't served under /mcp (Access only guards the root)", async () => {
+    assert.equal((await req("POST", "/mcp/auth/login", { form: { email: "owner@example.com", password: "x" } })).status, 404);
+    assert.equal((await req("POST", "/MCP/AUTH/LOGIN", { form: { email: "owner@example.com", password: "x" } })).status, 404);
+    assert.equal((await req("GET", "/mcp/oauth/consent")).status, 404);
+    const res = await req("GET", "/mcp/oauth/authorize?client_id=c&state=s");
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("location"), "/oauth/authorize?client_id=c&state=s");
+    assert.equal((await req("GET", "/mcp/.well-known/oauth-authorization-server")).status, 200);
+  });
+
   await check("login attempts are rate limited per IP", async () => {
     const statuses = [];
     for (let i = 0; i < 12; i += 1) {
