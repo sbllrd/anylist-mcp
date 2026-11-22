@@ -36,16 +36,17 @@ class AnyListClient {
       throw error;
     }
 
-    this.client = new AnyList({
+    const client = new AnyList({
       email: username,
       password: password
     });
 
     console.error(`Connecting to AnyList as ${username}...`);
-    await this.client.login();
+    await client.login();
     console.error('Successfully authenticated with AnyList');
-
-    await this.client.getLists();
+    // Only a logged-in client is kept, so a failed login is retried on the next call.
+    // The lists are loaded by connect(), which retries them on every call too.
+    this.client = client;
   }
 
   async connect(listName = null) {
@@ -57,17 +58,19 @@ class AnyListClient {
       throw error;
     }
 
-    // If already connected to the same list, skip reconnection
-    if (this.client && this.targetList && this.targetList.name === targetListName) {
-      return true;
-    }
-
     try {
       await this._authenticate();
 
-      // Find the target list
-      console.error(`Looking for list: "${targetListName}"`);
-      this.targetList = this.client.getListByName(targetListName);
+      // Reload the lists on every call. getLists() reuses the cached account data
+      // (anylist-js, ANYLIST_USER_DATA_MAX_AGE_MS) and downloads again only after it
+      // expired or something changed it (one of our writes, or a websocket "lists
+      // changed" message from another device). Without this the in-memory lists
+      // never see changes made in the AnyList apps.
+      await this.client.getLists();
+
+      const previous = this.targetList;
+      this.targetList = (previous && previous.name === targetListName && this.client.getListById(previous.identifier))
+        || this.client.getListByName(targetListName);
 
       if (!this.targetList) {
         const error = new Error(`List "${targetListName}" not found. Available lists: ${this.getAvailableListNames().join(', ')}`);
@@ -75,7 +78,6 @@ class AnyListClient {
         throw error;
       }
 
-      console.error(`Connected to list: "${this.targetList.name}"`);
 
       return true;
 
@@ -525,9 +527,9 @@ class AnyListClient {
         servings: r.servings || null,
         ingredientCount: r.ingredients ? r.ingredients.length : 0,
         stepCount: r.preparationSteps ? r.preparationSteps.length : 0,
-        createdAt: r.creationTimestamp
-          ? new Date(r.creationTimestamp * 1000).toISOString()
-          : (r.timestamp ? new Date(r.timestamp * 1000).toISOString() : null),
+        // Only the real creation time: `timestamp` is the last modification, which would
+        // reorder the planner's never-made recipes whenever one is edited.
+        createdAt: r.creationTimestamp ? new Date(r.creationTimestamp * 1000).toISOString() : null,
       }));
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
