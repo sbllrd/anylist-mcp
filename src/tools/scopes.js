@@ -27,6 +27,18 @@ const SHARED_HOUSEHOLD_READ = {
   shopping: ["list_lists", "list_items", "get_favorites", "get_recents", "list_stores", "list_categories"],
 };
 
+// The dashboard's meal planner (docs/architecture/meal-planner-v2-technical-plan.md,
+// 4.2): reads recipes and collections, reads the meal plan, and writes and
+// deletes meal-plan events. No shopping tools and no recipe writes. The server
+// cannot tell which events the planner wrote, so the planner itself only ever
+// deletes event ids from its own ledger (sending.py).
+const MEAL_PLANNER = {
+  health_check: true,
+  recipes: ["list"],
+  recipe_collections: ["list"],
+  meal_plan: ["list_events", "list_labels", "create_event", "delete_event"],
+};
+
 export const SCOPE_PROFILES = {
   // Unrestricted: upstream behavior, and what an unmapped client gets.
   full: null,
@@ -46,6 +58,8 @@ export const SCOPE_PROFILES = {
     ],
     shopping_delete_item: true,
   },
+  // The dashboard's meal planner v2 (see MEAL_PLANNER above).
+  meal_planner: MEAL_PLANNER,
 };
 
 const EXTRA_TOOLS = {

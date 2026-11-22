@@ -34,15 +34,19 @@ export function register(server, getClient) {
       url: z.string().optional().describe("URL to import recipe from (import_url, normalize)"),
       text: z.string().optional().describe("Raw recipe text to parse (normalize only)"),
       save: z.boolean().optional().describe("If true, also save normalized recipe to AnyList (normalize only, default false)"),
+      format: z.enum(["text", "json"]).optional().describe("Output format for list: 'json' returns [{id, name, createdAt}] for programmatic use (default text)"),
     }
   }, async (params) => {
-    const { action, name, search, ingredients, steps, note, source_name, source_url, prep_time, cook_time, servings, url, text: recipeText, save: saveRecipe } = params;
+    const { action, name, search, ingredients, steps, note, source_name, source_url, prep_time, cook_time, servings, url, text: recipeText, save: saveRecipe, format } = params;
     try {
       const client = await getClient();
       await client.connect(null);
       switch (action) {
         case "list": {
           const recipes = await client.getRecipes(search || null);
+          if (format === "json") {
+            return textResponse(JSON.stringify(recipes.map(r => ({ id: r.identifier, name: r.name, createdAt: r.createdAt || null }))));
+          }
           if (recipes.length === 0) return textResponse(search ? `No recipes found matching "${search}".` : "No recipes found.");
           const list = recipes.map(r => {
             const parts = [`- **${r.name}**`];

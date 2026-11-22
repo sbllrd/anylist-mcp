@@ -10,7 +10,7 @@ export function register(server, getClient) {
     description: `Manage AnyList meal planning calendar. Actions:
 - list_events: Show all meal plan events (sorted by date)
 - list_labels: Show available labels (Breakfast, Lunch, Dinner, etc.) with IDs
-- create_event: Add a meal plan event for a date
+- create_event: Add a meal plan event for a date (optionally marked as leftovers)
 - delete_event: Delete a meal plan event by ID`,
     inputSchema: {
       action: z.enum(["list_events", "list_labels", "create_event", "delete_event"]).describe("The meal plan action to perform"),
@@ -21,10 +21,12 @@ export function register(server, getClient) {
       recipe_id: z.string().optional().describe("Recipe ID to link (create_event)"),
       label_id: z.string().optional().describe("Label ID for meal type (create_event)"),
       details: z.string().optional().describe("Additional notes (create_event)"),
+      is_leftover: z.boolean().optional().describe("Mark the event as leftovers (create_event)"),
+      format: z.enum(["text", "json"]).optional().describe("Output format for list_events: 'json' returns an array of {id, date, title, details, recipeId, recipeName, label, labelId, isLeftover} for programmatic use (default text)"),
       event_id: z.string().optional().describe("Event ID to delete (required for delete_event)"),
     }
   }, async (params) => {
-    const { action, date, start_date, end_date, title, recipe_id, label_id, details, event_id } = params;
+    const { action, date, start_date, end_date, title, recipe_id, label_id, details, event_id, is_leftover, format } = params;
     try {
       const client = await getClient();
       await client.connect(null);
@@ -33,8 +35,15 @@ export function register(server, getClient) {
           let events = await client.getMealPlanEvents();
           if (start_date) events = events.filter(e => e.date >= start_date);
           if (end_date) events = events.filter(e => e.date <= end_date);
-          if (events.length === 0) return textResponse("No meal plan events found.");
           events.sort((a, b) => a.date.localeCompare(b.date));
+          if (format === "json") {
+            return textResponse(JSON.stringify(events.map(e => ({
+              id: e.identifier, date: e.date, title: e.title || null, details: e.details || null,
+              recipeId: e.recipeId || null, recipeName: e.recipeName || null,
+              label: e.labelName || null, labelId: e.labelId || null, isLeftover: !!e.isLeftover,
+            }))));
+          }
+          if (events.length === 0) return textResponse("No meal plan events found.");
           const list = events.map(e => {
             const parts = [`- **${e.date}**`];
             if (e.title) parts.push(e.title);
@@ -70,6 +79,7 @@ export function register(server, getClient) {
             recipeId: recipe_id || null,
             labelId: label_id || null,
             details: details || null,
+            isLeftover: !!is_leftover,
           });
           return textResponse(`Created meal plan event for ${result.date}`);
         }

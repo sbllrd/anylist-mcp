@@ -139,4 +139,38 @@ describe('meal_plan tool', () => {
       assert.equal(result.isError, true);
     });
   });
+
+
+  describe('json output and leftovers (meal planner v2)', () => {
+    it('list_events format=json returns structured events, sorted, with ids the planner can join on', async () => {
+      client._events.push(
+        { identifier: 'e2', date: '2025-03-02', title: 'Eat out (Declan\u2019s choice)', labelName: 'Dinner', labelId: 'L1' },
+        { identifier: 'e1', date: '2025-03-01', recipeId: 'r-1', recipeName: 'Tacos', isLeftover: true },
+      );
+      const result = await handlers.meal_plan({ action: 'list_events', format: 'json' });
+      const events = JSON.parse(result.content[0].text);
+      assert.deepEqual(events.map(e => e.id), ['e1', 'e2']);
+      assert.deepEqual(events[0], { id: 'e1', date: '2025-03-01', title: null, details: null, recipeId: 'r-1', recipeName: 'Tacos', label: null, labelId: null, isLeftover: true });
+      assert.equal(events[1].label, 'Dinner');
+      assert.equal(events[1].isLeftover, false);
+    });
+
+    it('list_events format=json returns an empty array, not a sentence, when there are no events', async () => {
+      const result = await handlers.meal_plan({ action: 'list_events', format: 'json' });
+      assert.deepEqual(JSON.parse(result.content[0].text), []);
+    });
+
+    it('list_events text output is unchanged when format is omitted', async () => {
+      client._events.push({ identifier: 'e1', date: '2025-03-01', title: 'Tacos' });
+      const result = await handlers.meal_plan({ action: 'list_events' });
+      assert.match(result.content[0].text, /^Meal Plan \(1 events\):/);
+    });
+
+    it('create_event passes is_leftover through', async () => {
+      await handlers.meal_plan({ action: 'create_event', date: '2025-03-05', recipe_id: 'r-1', is_leftover: true });
+      assert.equal(client._events[0].isLeftover, true);
+      await handlers.meal_plan({ action: 'create_event', date: '2025-03-06', title: 'Tacos' });
+      assert.equal(client._events[1].isLeftover, false);
+    });
+  });
 });

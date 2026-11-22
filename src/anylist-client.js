@@ -525,6 +525,9 @@ class AnyListClient {
         servings: r.servings || null,
         ingredientCount: r.ingredients ? r.ingredients.length : 0,
         stepCount: r.preparationSteps ? r.preparationSteps.length : 0,
+        createdAt: r.creationTimestamp
+          ? new Date(r.creationTimestamp * 1000).toISOString()
+          : (r.timestamp ? new Date(r.timestamp * 1000).toISOString() : null),
       }));
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
@@ -807,6 +810,8 @@ class AnyListClient {
         labelColor: e.label ? e.label.hexColor : null,
         recipeName: e.recipe ? e.recipe.name : null,
         recipeId: e.recipeId || null,
+        labelId: e.labelId || null,
+        isLeftover: !!e.isLeftover,
       }));
     } catch (error) {
       throw new Error(`Failed to get meal plan events: ${error.message}`);
@@ -830,7 +835,7 @@ class AnyListClient {
     }
   }
 
-  async createMealPlanEvent({ date, title = null, recipeId = null, labelId = null, details = null }) {
+  async createMealPlanEvent({ date, title = null, recipeId = null, labelId = null, details = null, isLeftover = false }) {
     if (!this.client) {
       throw new Error('Not connected. Call connect() first.');
     }
@@ -840,6 +845,7 @@ class AnyListClient {
       if (recipeId) eventObj.recipeId = recipeId;
       if (labelId) eventObj.labelId = labelId;
       if (details) eventObj.details = details;
+      if (isLeftover) eventObj.isLeftover = true;
       const event = await this.client.createEvent(eventObj);
       await event.save();
       console.error(`Created meal plan event for ${date}`);
@@ -920,6 +926,7 @@ class AnyListClient {
         identifier: c.identifier,
         name: c.name,
         recipeCount: c.recipeIds ? c.recipeIds.length : 0,
+        recipeIds: c.recipeIds ? [...c.recipeIds] : [],
         recipeNames: (c.recipeIds || []).map(id => {
           const r = recipes.find(r => r.identifier === id);
           return r ? r.name : id;

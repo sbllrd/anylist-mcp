@@ -54,4 +54,18 @@ describe('recipe_collections tool', () => {
       assert.ok(result.content[0].text.includes('not found'));
     });
   });
+
+
+  describe('list format=json (meal planner v2)', () => {
+    it('returns collection ids and recipe ids, so names with commas or duplicates stay unambiguous', async () => {
+      client._collections.push({ identifier: 'c-1', name: 'Boys', recipeCount: 2, recipeNames: ['Hamburgers, French Fries', 'Meatloaf'], recipeIds: ['r-1', 'r-9'] });
+      const result = await handlers.recipe_collections({ action: 'list', format: 'json' });
+      assert.deepEqual(JSON.parse(result.content[0].text), [{ id: 'c-1', name: 'Boys', recipeIds: ['r-1', 'r-9'] }]);
+    });
+
+    it('returns an empty array when there are none', async () => {
+      const result = await handlers.recipe_collections({ action: 'list', format: 'json' });
+      assert.deepEqual(JSON.parse(result.content[0].text), []);
+    });
+  });
 });

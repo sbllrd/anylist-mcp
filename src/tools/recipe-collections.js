@@ -14,15 +14,19 @@ export function register(server, getClient) {
       action: z.enum(["list", "create", "delete"]).describe("The collection action to perform"),
       name: z.string().optional().describe("Collection name (required for create, delete)"),
       recipe_names: z.array(z.string()).optional().describe("Recipe names to include (create only)"),
+      format: z.enum(["text", "json"]).optional().describe("Output format for list: 'json' returns [{id, name, recipeIds}] for programmatic use (default text)"),
     }
   }, async (params) => {
-    const { action, name, recipe_names } = params;
+    const { action, name, format, recipe_names } = params;
     try {
       const client = await getClient();
       await client.connect(null);
       switch (action) {
         case "list": {
           const collections = await client.getRecipeCollections();
+          if (format === "json") {
+            return textResponse(JSON.stringify(collections.map(c => ({ id: c.identifier, name: c.name, recipeIds: c.recipeIds || [] }))));
+          }
           if (collections.length === 0) return textResponse("No recipe collections found.");
           const list = collections.map(c => `- **${c.name}** (${c.recipeCount} recipes)${c.recipeCount > 0 ? ': ' + c.recipeNames.join(', ') : ''}`).join('\n');
           return textResponse(`Recipe Collections (${collections.length}):\n${list}`);

@@ -175,4 +175,24 @@ describe('recipes tool', () => {
       assert.equal(result.isError, true);
     });
   });
+
+
+  describe('list format=json (meal planner v2)', () => {
+    it('returns id, name and createdAt, and keeps duplicate names distinct by id', async () => {
+      client._recipes.push(
+        { identifier: 'r-1', name: 'Meatloaf', createdAt: '2025-01-02T00:00:00.000Z' },
+        { identifier: 'r-2', name: 'Meatloaf' },
+      );
+      const result = await handlers.recipes({ action: 'list', format: 'json' });
+      assert.deepEqual(JSON.parse(result.content[0].text), [
+        { id: 'r-1', name: 'Meatloaf', createdAt: '2025-01-02T00:00:00.000Z' },
+        { id: 'r-2', name: 'Meatloaf', createdAt: null },
+      ]);
+    });
+
+    it('returns an empty array for no recipes', async () => {
+      const result = await handlers.recipes({ action: 'list', format: 'json' });
+      assert.deepEqual(JSON.parse(result.content[0].text), []);
+    });
+  });
 });

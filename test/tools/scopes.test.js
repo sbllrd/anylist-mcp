@@ -56,6 +56,55 @@ describe('full profile', () => {
   });
 });
 
+describe('meal_planner profile', () => {
+  let client;
+  let tools;
+
+  beforeEach(() => {
+    client = new MockAnyListClient();
+    tools = register('meal_planner', client);
+  });
+
+  it('registers only the planner tools, with recipes read-only and the meal plan writable', () => {
+    assert.deepEqual(Object.keys(tools).sort(), ['health_check', 'meal_plan', 'recipe_collections', 'recipes']);
+    assert.deepEqual(tools.recipes.config.inputSchema.action.options, ['list']);
+    assert.deepEqual(tools.recipe_collections.config.inputSchema.action.options, ['list']);
+    assert.deepEqual(tools.meal_plan.config.inputSchema.action.options, ['list_events', 'list_labels', 'create_event', 'delete_event']);
+  });
+
+  it('has no shopping tools at all', () => {
+    assert.equal(tools.shopping, undefined);
+    assert.equal(tools.shopping_delete_item, undefined);
+  });
+
+  it('refuses recipe writes even if the schema is bypassed', async () => {
+    client._recipes.push({ identifier: 'r-1', name: 'Pasta' });
+    for (const action of ['get', 'create', 'update', 'delete', 'import_url']) {
+      const result = await tools.recipes.handler({ action, name: 'Pasta' });
+      assert.equal(result.isError, true, action);
+      assert.match(result.content[0].text, /not permitted/);
+    }
+  });
+
+  it('refuses collection writes even if the schema is bypassed', async () => {
+    for (const action of ['create', 'delete']) {
+      const result = await tools.recipe_collections.handler({ action, name: 'X' });
+      assert.equal(result.isError, true, action);
+    }
+  });
+
+  it('can create and delete meal plan events, and list them as json', async () => {
+    const created = await tools.meal_plan.handler({ action: 'create_event', date: '2030-01-15', title: 'Tacos' });
+    assert.ok(!created.isError);
+    const listed = await tools.meal_plan.handler({ action: 'list_events', format: 'json' });
+    assert.ok(Array.isArray(JSON.parse(listed.content[0].text)));
+  });
+
+  it('is accepted as a client scope mapping', () => {
+    assert.deepEqual(parseClientScopes('{"abc": "meal_planner"}'), { abc: 'meal_planner' });
+  });
+});
+
 describe('shared_household_read profile', () => {
   let client;
   let tools;
