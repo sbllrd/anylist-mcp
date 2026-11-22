@@ -919,7 +919,7 @@ class AnyListClient {
       throw new Error('Not connected. Call connect() first.');
     }
     try {
-      const userData = await this.client._getUserData(true);
+      const userData = await this.client._getUserData(true);   // shared with getRecipes below
       const collections = userData.recipeDataResponse.recipeCollections || [];
       const recipes = await this.client.getRecipes();
       return collections.map(c => ({
