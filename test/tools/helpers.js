@@ -220,6 +220,15 @@ export class MockAnyListClient {
 
   async getRecipeCollections() { return [...this._collections]; }
 
+  async getRecipeCatalog() {
+    return this._recipes.map(r => ({ id: r.identifier, name: r.name, ingredients: r.ingredients || [], steps: r.preparationSteps || [] }));
+  }
+
+  async addRecipesToCollections(changes) {
+    this.lastCollectionChanges = changes;
+    return { results: changes.map(c => ({ id: c.collectionId || `new-${c.createName}`, name: c.createName || c.collectionId, created: !c.collectionId, added: c.recipeIds, alreadyIn: [] })), error: null };
+  }
+
   async createRecipeCollection(name, recipeNames = []) {
     const c = { identifier: 'c-1', name, recipeCount: recipeNames.length, recipeNames };
     this._collections.push(c);

@@ -68,7 +68,7 @@ describe('meal_planner profile', () => {
   it('registers only the planner tools, with recipes read-only and the meal plan writable', () => {
     assert.deepEqual(Object.keys(tools).sort(), ['health_check', 'meal_plan', 'recipe_collections', 'recipes']);
     assert.deepEqual(tools.recipes.config.inputSchema.action.options, ['list']);
-    assert.deepEqual(tools.recipe_collections.config.inputSchema.action.options, ['list']);
+    assert.deepEqual(tools.recipe_collections.config.inputSchema.action.options, ['list', 'add_recipes']);
     assert.deepEqual(tools.meal_plan.config.inputSchema.action.options, ['list_events', 'list_labels', 'create_event', 'delete_event']);
   });
 
@@ -86,7 +86,7 @@ describe('meal_planner profile', () => {
     }
   });
 
-  it('refuses collection writes even if the schema is bypassed', async () => {
+  it('refuses collection creates and deletes even if the schema is bypassed (it may only add recipes)', async () => {
     for (const action of ['create', 'delete']) {
       const result = await tools.recipe_collections.handler({ action, name: 'X' });
       assert.equal(result.isError, true, action);

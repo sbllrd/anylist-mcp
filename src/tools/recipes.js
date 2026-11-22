@@ -35,14 +35,18 @@ export function register(server, getClient) {
       text: z.string().optional().describe("Raw recipe text to parse (normalize only)"),
       save: z.boolean().optional().describe("If true, also save normalized recipe to AnyList (normalize only, default false)"),
       format: z.enum(["text", "json"]).optional().describe("Output format for list: 'json' returns [{id, name, createdAt}] for programmatic use (default text)"),
+      detail: z.boolean().optional().describe("With format 'json' (list only): every recipe's full fields (ingredients, steps, times, rating, source, note) in one read, for an offline index"),
     }
   }, async (params) => {
-    const { action, name, search, ingredients, steps, note, source_name, source_url, prep_time, cook_time, servings, url, text: recipeText, save: saveRecipe, format } = params;
+    const { action, name, search, ingredients, steps, note, source_name, source_url, prep_time, cook_time, servings, url, text: recipeText, save: saveRecipe, format, detail } = params;
     try {
       const client = await getClient();
       await client.connect(null);
       switch (action) {
         case "list": {
+          if (format === "json" && detail) {
+            return textResponse(JSON.stringify(await client.getRecipeCatalog()));
+          }
           const recipes = await client.getRecipes(search || null);
           if (format === "json") {
             return textResponse(JSON.stringify(recipes.map(r => ({ id: r.identifier, name: r.name, createdAt: r.createdAt || null }))));

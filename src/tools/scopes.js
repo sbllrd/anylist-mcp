@@ -32,10 +32,14 @@ const SHARED_HOUSEHOLD_READ = {
 // deletes meal-plan events. No shopping tools and no recipe writes. The server
 // cannot tell which events the planner wrote, so the planner itself only ever
 // deletes event ids from its own ledger (sending.py).
+//
+// It may also add recipes to collections (add_recipes), for the Recipes tab
+// (docs/architecture/recipe-index.md): adds only, never a removal or a
+// collection delete, and the dashboard keeps it behind its own switch.
 const MEAL_PLANNER = {
   health_check: true,
   recipes: ["list"],
-  recipe_collections: ["list"],
+  recipe_collections: ["list", "add_recipes"],
   meal_plan: ["list_events", "list_labels", "create_event", "delete_event"],
 };
 

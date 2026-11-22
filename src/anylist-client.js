@@ -939,6 +939,102 @@ class AnyListClient {
     }
   }
 
+  /**
+   * Every recipe with the fields an offline index needs (samwise fork), from the one
+   * cached account download that `getRecipes` also uses: no extra AnyList traffic.
+   */
+  async getRecipeCatalog() {
+    if (!this.client) {
+      throw new Error('Not connected. Call connect() first.');
+    }
+    const recipes = await this.client.getRecipes();
+    return recipes.map(r => ({
+      id: r.identifier,
+      name: r.name || '',
+      note: r.note || null,
+      sourceName: r.sourceName || null,
+      sourceUrl: r.sourceUrl || null,
+      rating: r.rating || null,
+      prepTime: r.prepTime || null,
+      cookTime: r.cookTime || null,
+      servings: r.servings || null,
+      createdAt: r.creationTimestamp ? new Date(r.creationTimestamp * 1000).toISOString() : null,
+      ingredients: (r.ingredients || []).map(i => (i.isHeading ? `## ${i.rawIngredient || i.name || ''}` : (i.rawIngredient || [i.quantity, i.name, i.note].filter(Boolean).join(' ')))).filter(Boolean),
+      steps: [...(r.preparationSteps || [])],
+      photoCount: (r.photoIds || []).length + (r.photoUrls || []).length,
+    }));
+  }
+
+  /**
+   * Adds recipes to collections, creating a collection when a change names one instead
+   * of giving an id (samwise fork). Only ever adds: nothing here removes a recipe from a
+   * collection or deletes one. Every id is checked before anything is written, so a bad
+   * id refuses the whole batch. One account read (cached), then one write per collection.
+   *
+   * changes: [{ collectionId, recipeIds } | { createName, recipeIds }]
+   * returns: { results: [{ id, name, created, added: [ids], alreadyIn: [ids] }], error }
+   * where error is set (and results lists only what was written) if a write failed part way.
+   */
+  async addRecipesToCollections(changes) {
+    if (!this.client) {
+      throw new Error('Not connected. Call connect() first.');
+    }
+    const userData = await this.client._getUserData(true);
+    await this.client.getRecipes();   // sets recipeDataId; same cached download
+    const recipeIds = new Set((userData.recipeDataResponse.recipes || []).map(r => r.identifier));
+    const collections = userData.recipeDataResponse.recipeCollections || [];
+    const byId = new Map(collections.map(c => [c.identifier, c]));
+    const names = new Set(collections.map(c => (c.name || '').trim().toLowerCase()));
+
+    const plan = [];
+    for (const change of changes) {
+      const ids = [...new Set(change.recipeIds || [])];
+      if (ids.length === 0) throw new Error('Each change needs at least one recipe id');
+      const unknown = ids.filter(id => !recipeIds.has(id));
+      if (unknown.length) throw new Error(`Unknown recipe id(s): ${unknown.join(', ')}`);
+      if (change.collectionId) {
+        const raw = byId.get(change.collectionId);
+        if (!raw) throw new Error(`Unknown collection id: ${change.collectionId}`);
+        if (plan.some(p => p.raw && p.raw.identifier === raw.identifier)) throw new Error(`Collection ${change.collectionId} is listed twice; list each collection once`);
+        const existing = [...(raw.recipeIds || [])];
+        plan.push({ raw, existing, add: ids.filter(id => !existing.includes(id)), alreadyIn: ids.filter(id => existing.includes(id)) });
+      } else {
+        const name = (change.createName || '').trim();
+        if (!name) throw new Error('A change needs a collectionId or a createName');
+        if (names.has(name.toLowerCase())) throw new Error(`A collection named "${name}" already exists; add to it by id`);
+        names.add(name.toLowerCase());
+        plan.push({ create: name, add: ids });
+      }
+    }
+
+    const results = [];
+    for (const step of plan) {
+      try {
+        if (step.create) {
+          const collection = this.client.createRecipeCollection({ name: step.create, recipeIds: step.add });
+          await collection.save();
+          results.push({ id: collection.identifier, name: step.create, created: true, added: step.add, alreadyIn: [] });
+          continue;
+        }
+        if (step.add.length) {
+          // The same encoding as upstream's RecipeCollection#addRecipe: the whole list, new ids included.
+          // A copy, so the cached account data isn't changed underneath other readers.
+          const collection = this.client.createRecipeCollection({
+            identifier: step.raw.identifier, timestamp: step.raw.timestamp, name: step.raw.name,
+            recipeIds: [...step.existing, ...step.add], collectionSettings: step.raw.collectionSettings,
+          });
+          await collection.performOperation('add-recipes-to-collection');
+        }
+        results.push({ id: step.raw.identifier, name: step.raw.name, created: false, added: step.add, alreadyIn: step.alreadyIn });
+      } catch (error) {
+        // What was written stays written; report it so the caller can record it.
+        return { results, error: `Stopped at "${step.create || step.raw.name}": ${error.message}` };
+      }
+    }
+    console.error(`Added recipes to ${results.length} collection(s)`);
+    return { results, error: null };
+  }
+
   async createRecipeCollection(name, recipeNames = []) {
     if (!this.client) {
       throw new Error('Not connected. Call connect() first.');

@@ -194,5 +194,11 @@ describe('recipes tool', () => {
       const result = await handlers.recipes({ action: 'list', format: 'json' });
       assert.deepEqual(JSON.parse(result.content[0].text), []);
     });
+
+    it('detail=true returns the full catalog from one read (recipe index)', async () => {
+      client._recipes.push({ identifier: 'r-1', name: 'Tacos', ingredients: ['1 lb beef'], preparationSteps: ['Cook.'] });
+      const result = await handlers.recipes({ action: 'list', format: 'json', detail: true });
+      assert.deepEqual(JSON.parse(result.content[0].text), [{ id: 'r-1', name: 'Tacos', ingredients: ['1 lb beef'], steps: ['Cook.'] }]);
+    });
   });
 });
