@@ -22,7 +22,7 @@ export function register(server, getClient) {
       label_id: z.string().optional().describe("Label ID for meal type (create_event)"),
       details: z.string().optional().describe("Additional notes (create_event)"),
       is_leftover: z.boolean().optional().describe("Mark the event as leftovers (create_event)"),
-      format: z.enum(["text", "json"]).optional().describe("Output format for list_events: 'json' returns an array of {id, date, title, details, recipeId, recipeName, label, labelId, isLeftover} for programmatic use (default text)"),
+      format: z.enum(["text", "json"]).optional().describe("Output format. For list_events, 'json' returns an array of {id, date, title, details, recipeId, recipeName, label, labelId, isLeftover} for programmatic use; for create_event, 'json' returns {id, date, alreadyExists} (default text)"),
       event_id: z.string().optional().describe("Event ID to delete (required for delete_event)"),
     }
   }, async (params) => {
@@ -71,6 +71,7 @@ export function register(server, getClient) {
             (title && e.title && e.title.toLowerCase() === title.toLowerCase()) ||
             (recipe_id && e.recipeId === recipe_id));
           if (duplicate) {
+            if (format === "json") return textResponse(JSON.stringify({ id: duplicate.identifier, date: eventDate, alreadyExists: true }));
             return textResponse(`already_exists: meal plan already has ${duplicate.title || duplicate.recipeName || "that meal"} on ${eventDate} (id: ${duplicate.identifier}); nothing added`);
           }
           const result = await client.createMealPlanEvent({
@@ -81,7 +82,8 @@ export function register(server, getClient) {
             details: details || null,
             isLeftover: !!is_leftover,
           });
-          return textResponse(`Created meal plan event for ${result.date}`);
+          if (format === "json") return textResponse(JSON.stringify({ id: result.identifier, date: result.date, alreadyExists: false }));
+          return textResponse(`Created meal plan event for ${result.date} (id: ${result.identifier})`);
         }
         case "delete_event": {
           let eventId = event_id;

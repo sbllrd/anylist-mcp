@@ -104,6 +104,22 @@ describe('meal_plan tool', () => {
     });
   });
 
+  describe('create_event result ids', () => {
+    it('text output names the new event id', async () => {
+      const r = await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Tacos' });
+      assert.match(r.content[0].text, /Created meal plan event for 2025-03-01 \(id: .+\)/);
+    });
+
+    it('json output returns the id, and the existing id on a retry', async () => {
+      const a = JSON.parse((await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Tacos', format: 'json' })).content[0].text);
+      assert.equal(a.alreadyExists, false);
+      assert.ok(a.id);
+      assert.deepEqual(client._events.map(e => e.identifier), [a.id]);
+      const b = JSON.parse((await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Tacos', format: 'json' })).content[0].text);
+      assert.deepEqual(b, { id: a.id, date: '2025-03-01', alreadyExists: true });
+    });
+  });
+
   describe('create_event retry safety', () => {
     it('does not create the same title twice on one date', async () => {
       await handlers.meal_plan({ action: 'create_event', date: '2025-03-01', title: 'Tacos' });

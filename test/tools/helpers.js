@@ -207,8 +207,9 @@ export class MockAnyListClient {
   async getMealPlanLabels() { return [...this._labels]; }
 
   async createMealPlanEvent(opts) {
-    this._events.push(opts);
-    return { identifier: 'e-1', date: opts.date };
+    const identifier = `e-${this._events.length + 1}`;
+    this._events.push({ ...opts, identifier });
+    return { identifier, date: opts.date };
   }
 
   async deleteMealPlanEvent(id) {
