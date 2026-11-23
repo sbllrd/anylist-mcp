@@ -805,7 +805,9 @@ class AnyListClient {
       const events = await this.client.getMealPlanningCalendarEvents();
       return events.map(e => ({
         identifier: e.identifier,
-        date: e.date instanceof Date ? e.date.toISOString().slice(0, 10) : String(e.date),
+        // No date: the event is in the meal plan Queue, not on the calendar.
+        date: e.date instanceof Date ? e.date.toISOString().slice(0, 10) : (e.date ? String(e.date) : null),
+        queued: !e.date,
         title: e.title || null,
         details: e.details || null,
         labelName: e.label ? e.label.name : null,

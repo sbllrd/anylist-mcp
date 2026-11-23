@@ -172,7 +172,7 @@ Manage the AnyList meal planning calendar.
 **Actions:**
 
 ```json
-// View all meal plan events, sorted by date
+// View all meal plan events, sorted by date, then the Queue (recipes saved for later, no date)
 { "name": "meal_plan", "arguments": { "action": "list_events" } }
 
 // Get available labels (Breakfast, Lunch, Dinner, etc.) with their IDs

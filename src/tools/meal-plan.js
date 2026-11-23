@@ -8,7 +8,7 @@ export function register(server, getClient) {
   server.registerTool("meal_plan", {
     title: "Meal Plan",
     description: `Manage AnyList meal planning calendar. Actions:
-- list_events: Show all meal plan events (sorted by date)
+- list_events: Show meal plan events (sorted by date), then the meal plan Queue (recipes saved for later, with no date) in its own section
 - list_labels: Show available labels (Breakfast, Lunch, Dinner, etc.) with IDs
 - create_event: Add a meal plan event for a date (optionally marked as leftovers)
 - delete_event: Delete a meal plan event by ID`,
@@ -22,7 +22,7 @@ export function register(server, getClient) {
       label_id: z.string().optional().describe("Label ID for meal type (create_event)"),
       details: z.string().optional().describe("Additional notes (create_event)"),
       is_leftover: z.boolean().optional().describe("Mark the event as leftovers (create_event)"),
-      format: z.enum(["text", "json"]).optional().describe("Output format. For list_events, 'json' returns an array of {id, date, title, details, recipeId, recipeName, label, labelId, isLeftover} for programmatic use; for create_event, 'json' returns {id, date, alreadyExists} (default text)"),
+      format: z.enum(["text", "json"]).optional().describe("Output format. For list_events, 'json' returns an array of {id, date, queued, title, details, recipeId, recipeName, label, labelId, isLeftover} for programmatic use (queued events have date null and come last); for create_event, 'json' returns {id, date, alreadyExists} (default text)"),
       event_id: z.string().optional().describe("Event ID to delete (required for delete_event)"),
     }
   }, async (params) => {
@@ -32,28 +32,36 @@ export function register(server, getClient) {
       await client.connect(null);
       switch (action) {
         case "list_events": {
-          let events = await client.getMealPlanEvents();
+          const all = await client.getMealPlanEvents();
+          // Queued events (the app's Queue tab) have no date: never on a day, so the date filters
+          // don't apply to them. They are listed after the calendar, separately.
+          const queue = all.filter(e => e.queued || !e.date);
+          let events = all.filter(e => !(e.queued || !e.date));
           if (start_date) events = events.filter(e => e.date >= start_date);
           if (end_date) events = events.filter(e => e.date <= end_date);
           events.sort((a, b) => a.date.localeCompare(b.date));
           if (format === "json") {
-            return textResponse(JSON.stringify(events.map(e => ({
-              id: e.identifier, date: e.date, title: e.title || null, details: e.details || null,
+            return textResponse(JSON.stringify([...events, ...queue].map(e => ({
+              id: e.identifier, date: e.date || null, queued: !e.date, title: e.title || null, details: e.details || null,
               recipeId: e.recipeId || null, recipeName: e.recipeName || null,
               label: e.labelName || null, labelId: e.labelId || null, isLeftover: !!e.isLeftover,
             }))));
           }
-          if (events.length === 0) return textResponse("No meal plan events found.");
-          const list = events.map(e => {
-            const parts = [`- **${e.date}**`];
+          if (events.length === 0 && queue.length === 0) return textResponse("No meal plan events found.");
+          const line = (e, head) => {
+            const parts = [head];
             if (e.title) parts.push(e.title);
             if (e.recipeName) parts.push(`📖 ${e.recipeName}`);
             if (e.labelName) parts.push(`[${e.labelName}]`);
             if (e.details) parts.push(`— ${e.details}`);
             parts.push(`(id: ${e.identifier})`);
             return parts.join(' ');
-          }).join('\n');
-          return textResponse(`Meal Plan (${events.length} events):\n${list}`);
+          };
+          const sections = [];
+          if (events.length) sections.push(`Meal Plan (${events.length} events):\n${events.map(e => line(e, `- **${e.date}**`)).join('\n')}`);
+          else sections.push("No meal plan events found.");
+          if (queue.length) sections.push(`Queue — saved for later, not on any day (${queue.length}):\n${queue.map(e => line(e, "- **Queue**")).join('\n')}`);
+          return textResponse(sections.join('\n\n'));
         }
         case "list_labels": {
           const labels = await client.getMealPlanLabels();

@@ -80,6 +80,33 @@ describe('meal_plan tool', () => {
       const result = await handlers.meal_plan({ action: 'list_events', start_date: '2025-08-01' });
       assert.ok(result.content[0].text.includes('No meal plan events'));
     });
+
+    it('lists queued events (no date) in their own section, not on a day', async () => {
+      client._events.push(
+        { date: '2025-11-23', recipeName: 'Pot Roast', identifier: 'q-today' },
+        { date: null, queued: true, recipeName: 'Mushroom Soup', identifier: 'q-1' },
+      );
+      const t = (await handlers.meal_plan({ action: 'list_events', start_date: '2025-11-23', end_date: '2025-11-23' })).content[0].text;
+      assert.ok(t.includes('Meal Plan (1 events)'), t);
+      assert.ok(t.indexOf('Queue') > t.indexOf('Pot Roast'), 'queue comes after the calendar');
+      assert.ok(t.includes('- **Queue** 📖 Mushroom Soup'), t);
+      assert.ok(!t.includes('**2025-11-23** 📖 Mushroom Soup'));
+    });
+
+    it('json marks queued events with a null date and lists them last', async () => {
+      client._events.push(
+        { date: null, queued: true, title: 'Grain Bowls', identifier: 'q-2' },
+        { date: '2025-11-24', title: 'Tacos', identifier: 'q-3' },
+      );
+      const rows = JSON.parse((await handlers.meal_plan({ action: 'list_events', format: 'json', start_date: '2025-11-01' })).content[0].text);
+      assert.deepEqual(rows.map(r => [r.id, r.date, r.queued]), [['q-3', '2025-11-24', false], ['q-2', null, true]]);
+    });
+
+    it('shows the queue when no dated events match', async () => {
+      client._events.push({ date: null, queued: true, title: 'Chili', identifier: 'q-4' });
+      const t = (await handlers.meal_plan({ action: 'list_events' })).content[0].text;
+      assert.ok(t.includes('No meal plan events found.') && t.includes('Chili'), t);
+    });
   });
 
   describe('list_labels', () => {
@@ -166,7 +193,7 @@ describe('meal_plan tool', () => {
       const result = await handlers.meal_plan({ action: 'list_events', format: 'json' });
       const events = JSON.parse(result.content[0].text);
       assert.deepEqual(events.map(e => e.id), ['e1', 'e2']);
-      assert.deepEqual(events[0], { id: 'e1', date: '2025-03-01', title: null, details: null, recipeId: 'r-1', recipeName: 'Tacos', label: null, labelId: null, isLeftover: true });
+      assert.deepEqual(events[0], { id: 'e1', date: '2025-03-01', queued: false, title: null, details: null, recipeId: 'r-1', recipeName: 'Tacos', label: null, labelId: null, isLeftover: true });
       assert.equal(events[1].label, 'Dinner');
       assert.equal(events[1].isLeftover, false);
     });
