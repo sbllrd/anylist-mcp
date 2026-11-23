@@ -102,3 +102,44 @@ test('the catalog carries ingredients, steps and times from the same read', asyn
   assert.equal(r.createdAt, '2023-11-14T22:13:20.000Z');
   assert.equal(r.photoCount, 1);
 });
+
+test('removes by sending only the ids to remove, skipping ids not in the collection', async () => {
+  const c = client({ collections: [{ identifier: 'c1', name: 'Weeknight', recipeIds: ['r1', 'r2'] }] });
+  const out = await c.removeRecipesFromCollections([{ collectionId: 'c1', recipeIds: ['r2', 'r3'] }]);
+  assert.equal(out.error, null);
+  assert.deepEqual(out.results, [{ id: 'c1', name: 'Weeknight', removed: ['r2'], notIn: ['r3'] }]);
+  assert.deepEqual(c.client.writes, [{ op: 'remove-recipes-from-collection', id: 'c1', name: 'Weeknight', recipeIds: ['r2'] }]);
+  const cached = (await c.client._getUserData()).recipeDataResponse.recipeCollections[0].recipeIds;
+  assert.deepEqual(cached, ['r1', 'r2']);
+});
+
+test('a remove with nothing in the collection writes nothing; an unknown or repeated collection refuses the batch', async () => {
+  const c = client();
+  await c.removeRecipesFromCollections([{ collectionId: 'c1', recipeIds: ['r3'] }]);
+  assert.equal(c.client.writes.length, 0);
+  for (const changes of [[{ collectionId: 'c9', recipeIds: ['r1'] }], [{ collectionId: 'c1', recipeIds: ['r1'] }, { collectionId: 'c1', recipeIds: ['r1'] }], [{ collectionId: 'c1', recipeIds: [] }]]) {
+    const d = client();
+    await assert.rejects(d.removeRecipesFromCollections(changes));
+    assert.equal(d.client.writes.length, 0, JSON.stringify(changes));
+  }
+});
+
+test('a failed remove stops the batch and reports what was already written', async () => {
+  const c = client({ failOn: 'Weeknight', collections: [{ identifier: 'c0', name: 'Soups', recipeIds: ['r3'] }, { identifier: 'c1', name: 'Weeknight', recipeIds: ['r1'] }] });
+  const out = await c.removeRecipesFromCollections([{ collectionId: 'c0', recipeIds: ['r3'] }, { collectionId: 'c1', recipeIds: ['r1'] }]);
+  assert.deepEqual(out.results.map(r => r.name), ['Soups']);
+  assert.match(out.error, /Weeknight.*500/);
+});
+
+test('deletes several collections from one account read, stopping at the first failure', async () => {
+  const deletes = [];
+  const c = client({ collections: [{ identifier: 'c1', name: 'A', recipeIds: [] }, { identifier: 'c2', name: 'B', recipeIds: [] }, { identifier: 'c3', name: 'C', recipeIds: [] }] });
+  const make = c.client.createRecipeCollection.bind(c.client);
+  c.client.createRecipeCollection = (raw) => ({ ...make(raw), async delete() { if (raw.name === 'B') throw new Error('Response code 429'); deletes.push(raw.identifier); } });
+  const out = await c.deleteRecipeCollections(['c1', 'c2', 'c3']);
+  assert.deepEqual(out.deleted, [{ id: 'c1', name: 'A' }]);
+  assert.match(out.error, /"B".*429/);
+  assert.deepEqual(deletes, ['c1']);
+  assert.equal(c.client.reads, 1);
+  await assert.rejects(c.deleteRecipeCollections(['c1', 'nope']), /Unknown collection/);
+});

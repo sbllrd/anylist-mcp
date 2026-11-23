@@ -48,6 +48,19 @@ describe('recipe_collections tool', () => {
       assert.equal(client._collections.length, 0);
     });
 
+    it('deletes by id, naming the collection it deleted', async () => {
+      client._collections.push({ identifier: 'c-9', name: 'Old Collection', recipeCount: 0, recipeNames: [] });
+      const result = await handlers.recipe_collections({ action: 'delete', collection_id: 'c-9' });
+      assert.equal(result.content[0].text, 'Deleted recipe collection "Old Collection"');
+      assert.equal(client._collections.length, 0);
+    });
+
+    it('deletes several by id in one call and returns JSON', async () => {
+      const result = await handlers.recipe_collections({ action: 'delete', collection_ids: ['c-1', 'c-2'] });
+      assert.deepEqual(client.lastDeleteIds, ['c-1', 'c-2']);
+      assert.equal(JSON.parse(result.content[0].text).deleted.length, 2);
+    });
+
     it('returns error for non-existent collection', async () => {
       const result = await handlers.recipe_collections({ action: 'delete', name: 'Nope' });
       assert.equal(result.isError, true);
@@ -83,6 +96,23 @@ describe('recipe_collections tool', () => {
         assert.equal(result.isError, true, JSON.stringify(changes));
       }
       assert.equal(client.lastCollectionChanges, undefined);
+    });
+  });
+
+  describe('remove_recipes (recipe index sync)', () => {
+    it('passes the batch through and returns JSON', async () => {
+      const result = await handlers.recipe_collections({ action: 'remove_recipes', changes: [{ collection_id: 'c1', recipe_ids: ['r1'] }] });
+      assert.ok(!result.isError);
+      assert.deepEqual(client.lastRemoveChanges, [{ collectionId: 'c1', recipeIds: ['r1'] }]);
+      assert.deepEqual(JSON.parse(result.content[0].text).results[0].removed, ['r1']);
+    });
+
+    it('needs changes, each with a collection_id and no create_name', async () => {
+      for (const changes of [undefined, [], [{ recipe_ids: ['r1'] }], [{ create_name: 'X', recipe_ids: ['r1'] }]]) {
+        const result = await handlers.recipe_collections({ action: 'remove_recipes', changes });
+        assert.equal(result.isError, true, JSON.stringify(changes));
+      }
+      assert.equal(client.lastRemoveChanges, undefined);
     });
   });
 });

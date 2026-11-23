@@ -1035,6 +1035,55 @@ class AnyListClient {
     return { results, error: null };
   }
 
+  /**
+   * Removes recipes from existing collections (samwise fork), for the recipe index's nightly
+   * collection sync. Every collection id is checked before anything is written; ids not in a
+   * collection are skipped. One account read (cached), then one write per collection.
+   *
+   * Upstream's RecipeCollection#removeRecipe sends the full list, removed id included, which
+   * removes nothing useful; this sends only the ids to remove (checked live, 2026-11-23).
+   *
+   * changes: [{ collectionId, recipeIds }]
+   * returns: { results: [{ id, name, removed: [ids], notIn: [ids] }], error }
+   */
+  async removeRecipesFromCollections(changes) {
+    if (!this.client) {
+      throw new Error('Not connected. Call connect() first.');
+    }
+    const userData = await this.client._getUserData(true);
+    await this.client.getRecipes();   // sets recipeDataId; same cached download
+    const byId = new Map((userData.recipeDataResponse.recipeCollections || []).map(c => [c.identifier, c]));
+
+    const plan = [];
+    for (const change of changes) {
+      const raw = byId.get(change.collectionId);
+      if (!raw) throw new Error(`Unknown collection id: ${change.collectionId}`);
+      if (plan.some(p => p.raw.identifier === raw.identifier)) throw new Error(`Collection ${change.collectionId} is listed twice; list each collection once`);
+      const ids = [...new Set(change.recipeIds || [])];
+      if (ids.length === 0) throw new Error('Each change needs at least one recipe id');
+      const existing = raw.recipeIds || [];
+      plan.push({ raw, remove: ids.filter(id => existing.includes(id)), notIn: ids.filter(id => !existing.includes(id)) });
+    }
+
+    const results = [];
+    for (const step of plan) {
+      try {
+        if (step.remove.length) {
+          const collection = this.client.createRecipeCollection({
+            identifier: step.raw.identifier, timestamp: step.raw.timestamp, name: step.raw.name,
+            recipeIds: step.remove, collectionSettings: step.raw.collectionSettings,
+          });
+          await collection.performOperation('remove-recipes-from-collection');
+        }
+        results.push({ id: step.raw.identifier, name: step.raw.name, removed: step.remove, notIn: step.notIn });
+      } catch (error) {
+        return { results, error: `Stopped at "${step.raw.name}": ${error.message}` };
+      }
+    }
+    console.error(`Removed recipes from ${results.length} collection(s)`);
+    return { results, error: null };
+  }
+
   async createRecipeCollection(name, recipeNames = []) {
     if (!this.client) {
       throw new Error('Not connected. Call connect() first.');
@@ -1057,18 +1106,55 @@ class AnyListClient {
     }
   }
 
-  async deleteRecipeCollection(name) {
+  /**
+   * Deletes several collections by id from ONE account read (samwise fork). Deleting one at a time
+   * re-downloads the whole account per call, because every write drops the cached data; 58 of those
+   * in a row got the account throttled (429) on 2026-11-23. Every id is checked first; the deletes
+   * stop at the first failure.
+   *
+   * returns: { deleted: [{ id, name }], error }
+   */
+  async deleteRecipeCollections(collectionIds) {
+    if (!this.client) {
+      throw new Error('Not connected. Call connect() first.');
+    }
+    const userData = await this.client._getUserData(true);
+    await this.client.getRecipes();   // sets recipeDataId; same cached download
+    const byId = new Map((userData.recipeDataResponse.recipeCollections || []).map(c => [c.identifier, c]));
+    const ids = [...new Set(collectionIds || [])];
+    if (ids.length === 0) throw new Error('No collection ids given');
+    const unknown = ids.filter(id => !byId.has(id));
+    if (unknown.length) throw new Error(`Unknown collection id(s): ${unknown.join(', ')}`);
+    const deleted = [];
+    for (const id of ids) {
+      const raw = byId.get(id);
+      try {
+        await this.client.createRecipeCollection(raw).delete();
+        deleted.push({ id, name: raw.name });
+      } catch (error) {
+        return { deleted, error: `Stopped at "${raw.name}": ${error.message}` };
+      }
+    }
+    console.error(`Deleted ${deleted.length} recipe collection(s)`);
+    return { deleted, error: null };
+  }
+
+  async deleteRecipeCollection(name, collectionId = null) {
     if (!this.client) {
       throw new Error('Not connected. Call connect() first.');
     }
     try {
       const userData = await this.client._getUserData(true);
       const collections = userData.recipeDataResponse.recipeCollections || [];
-      const raw = collections.find(c => c.name && c.name.toLowerCase() === name.toLowerCase());
-      if (!raw) throw new Error(`Recipe collection "${name}" not found`);
+      const raw = collectionId
+        ? collections.find(c => c.identifier === collectionId)
+        : collections.find(c => c.name && c.name.toLowerCase() === name.toLowerCase());
+      if (!raw) throw new Error(`Recipe collection "${collectionId || name}" not found`);
+      name = raw.name;
       const collection = this.client.createRecipeCollection(raw);
       await collection.delete();
       console.error(`Deleted recipe collection: ${name}`);
+      return name;
     } catch (error) {
       throw new Error(`Failed to delete recipe collection: ${error.message}`);
     }

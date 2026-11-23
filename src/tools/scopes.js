@@ -33,13 +33,14 @@ const SHARED_HOUSEHOLD_READ = {
 // cannot tell which events the planner wrote, so the planner itself only ever
 // deletes event ids from its own ledger (sending.py).
 //
-// It may also add recipes to collections (add_recipes), for the Recipes tab
-// (docs/architecture/recipe-index.md): adds only, never a removal or a
-// collection delete, and the dashboard keeps it behind its own switch.
+// It may also change recipe collections, for the Recipes tab and its nightly
+// collection sync (docs/architecture/recipe-index.md): add and remove recipes
+// by id, and delete a collection (the sync renames by create-then-delete). The
+// sync only touches collections linked to tags; it never creates recipes.
 const MEAL_PLANNER = {
   health_check: true,
   recipes: ["list"],
-  recipe_collections: ["list", "add_recipes"],
+  recipe_collections: ["list", "add_recipes", "remove_recipes", "delete"],
   meal_plan: ["list_events", "list_labels", "create_event", "delete_event"],
 };
 

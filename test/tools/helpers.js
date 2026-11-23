@@ -235,9 +235,19 @@ export class MockAnyListClient {
     return c;
   }
 
-  async deleteRecipeCollection(name) {
-    const idx = this._collections.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
-    if (idx === -1) throw new Error(`Recipe collection "${name}" not found`);
-    this._collections.splice(idx, 1);
+  async removeRecipesFromCollections(changes) {
+    this.lastRemoveChanges = changes;
+    return { results: changes.map(c => ({ id: c.collectionId, name: c.collectionId, removed: c.recipeIds, notIn: [] })), error: null };
+  }
+
+  async deleteRecipeCollections(ids) {
+    this.lastDeleteIds = ids;
+    return { deleted: ids.map(id => ({ id, name: id })), error: null };
+  }
+
+  async deleteRecipeCollection(name, collectionId = null) {
+    const idx = this._collections.findIndex(c => (collectionId ? c.identifier === collectionId : c.name.toLowerCase() === name.toLowerCase()));
+    if (idx === -1) throw new Error(`Recipe collection "${collectionId || name}" not found`);
+    return this._collections.splice(idx, 1)[0].name;
   }
 }
