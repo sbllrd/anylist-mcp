@@ -11,6 +11,11 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       ANYLIST_SESSION_IDLE_MINUTES: ${ANYLIST_SESSION_IDLE_MINUTES:-30}
+      # How long reads reuse one full account download (~5.5 MB). AnyList throttles accounts that download
+      # too often, and every caller (each dashboard process, the briefing, the nightly sync) shares this copy.
+      # Our own writes and other devices' list changes (websocket) clear it early; recipe and meal-plan edits
+      # made in the AnyList apps show up within this window.
+      ANYLIST_USER_DATA_MAX_AGE_MS: ${ANYLIST_USER_DATA_MAX_AGE_MS:-1800000}
       # client_id -> scope profile JSON (src/tools/scopes.js); unmapped clients get everything
       ANYLIST_CLIENT_SCOPES: ${ANYLIST_CLIENT_SCOPES:-}
       # The household member's AnyList email: scoped clients may change only lists shared with it
